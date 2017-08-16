@@ -1,0 +1,9 @@
+Package: zededa-provision
+Version: __VERSION__
+Section: base
+Priority: optional
+Architecture: __ARCH__
+Depends: xen-hypervisor-__ARCH__
+Maintainer:  Release Manager <release@zededa.com>
+Description: Zededa Provision Applications
+  Zededa Provisioning Applications.
