@@ -1,0 +1,85 @@
+#!/bin/tcsh
+#
+# RL
+#
+# The script name is short for "Restart LISP". And is used to call the script
+# RESTART-LISP with user specific parameters.
+#
+# Uncomment out the lines below if you want them to be active. And use this
+# script to start the LISP subsystem.
+#
+# Put a call to this script in /etc/rc.local so on system startup the LISP 
+# subsystem will start automatically. Note use absolute path names to refer 
+# to this script.
+#
+# For example, for the RESTART-LISP path name below, put this line in 
+# /etc/rc.local:
+#
+#    /home/<install-directory>/lispers.net/RL || exit 1
+#
+#------------------------------------------------------------------------------
+
+#
+# Remove the following lines (including the exit line) after this file has 
+# been modified and the script actually does something. Copy it from 
+# RL-template to file RL.
+#
+echo "This RL-template script file needs to be modified for your system and "
+echo "copied to file RL"
+exit
+
+# -------------------- xTR EID Address Configuration --------------------
+
+#
+# If you want to set an EID on the loopback interface for IPv4 and IPv6
+# respectively substitute the "x" with meaningful values.
+#
+#sudo ip addr add x.x.x.x/32 dev lo >& /dev/null
+#sudo ip addr add 2001:5:3::x/128 dev lo >& /dev/null
+
+#
+# MacOS syntax for configuring addresses.
+#
+#sudo ifconfig lo0 x.x.x.x/32 alias
+#sudo ifconfig lo0 inet6 2001:5:3::x/128 alias
+
+# -------------------- IPv6 Default Route Configuration --------------------
+
+#
+# Add default route and next-hop neighbor for IPv6 since it ususally
+# doesn't get configured by default.
+#
+#sudo ip route add 0::/0 via fe80::1 dev eth0
+#sudo ip nei add fe80::1 lladdr 0:0:0:0:0:1 dev eth0
+#sudo ip nei change fe80::1 lladdr 0:0:0:0:0:1 dev eth0
+
+#
+# MacOS syntax for configuring IPv6 default routes.
+#
+#sudo ndp -s fe80::1%en0 0:0:0:0:0:1
+#sudo route add -inet6 0::/0 fe80::1%en0
+
+# -------------------- RTR Specific Configuration --------------------
+
+#
+# Note about RTRs that are deployed in cloud providers, which means they
+# are behind NATs. You need to configure the global address on the 
+# loopback interface since it needs to know to get the ETR's RLOC address 
+# from the mapping versus its own address it could mistakenly select as an 
+# ETR RLOC because the RTR is comparing its local address to its global 
+# address in the mapping, when it isn't the same. So use the commands below
+# to start the RTR..
+#
+#sudo ip addr add <rtr-translated-rloc>/32 dev lo >& /dev/null
+#sudo ip addr add 130.211.169.66/32 dev lo >& /dev/null
+
+# -------------------- LISP Subsystem Startup --------------------
+
+#
+# Start the lispers.net LISP subsystem. Use an absolute path name.
+#
+#/usr/local/bin/lispers.net/RESTART-LISP 8080 eth0
+#/root/lispers.net/RESTART-LISP 8080 eth0
+#/home/dino/lispers.net/RESTART-LISP 8080 eth0
+
+#------------------------------------------------------------------------------
