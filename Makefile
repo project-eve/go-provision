@@ -11,6 +11,7 @@ BUILD_DATE  := $(shell date +"%Y-%m-%d %H:%M %Z")
 GIT_VERSION := $(shell git describe --match v --abbrev=8 --always --dirty)
 BRANCH_NAME := $(shell git rev-parse --abbrev-ref HEAD)
 VERSION     := $(MAJOR_VER).$(MINOR_VER)-$(GIT_VERSION)
+LISPURL     := "https://www.dropbox.com/s/j68o3q0r2ixedwp/lispers.net-x86-release-0.392.tgz"
 
 # For future use
 #LDFLAGS     := -ldflags "-X=main.Version=$(VERSION) -X=main.Build=$(BUILD_DATE)"
@@ -47,7 +48,8 @@ pkg: obj build
 	@cp -p README $(ETCDIR)
 	@cp -p etc/* $(ETCDIR)
 	@cp -p scripts/*.sh $(BINDIR)
-	@cp -p lisp/* $(LISPDIR)
+	@echo "lisp"
+	@cd $(LISPDIR) && wget -q -O - $(LISPURL) | tar -zxf -
 	@mkdir -p $(OBJDIR)/$(PKG)/DEBIAN
 	@sed "s/__VERSION__/$(VERSION)/;s/__ARCH__/$(ARCH)/" package/control > $(OBJDIR)/$(PKG)/DEBIAN/control
 	@cp -p package/postinst package/prerm $(OBJDIR)/$(PKG)/DEBIAN/
