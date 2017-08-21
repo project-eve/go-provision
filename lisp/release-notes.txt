@@ -1,0 +1,788 @@
+
+                lispers.net Beta Release Version 0.392
+                --------------------------------------
+
+o Release date: Thu Aug 17 19:37:17 PDT 2017
+
+o Do not pcap an IPv4 header where bytes 4 through 7 are 0. The lisp-etr and
+  lisp-rtr processes are mistakening receiving it as "last fragment" of a
+  fragmented IPv4 datagram. This bug introduced when adding IPv4 reassembly
+  code in release 0.390.
+
+o Put "sudo ip6tables -D POSTROUTING -t mangle" into remove-lisp-iptables.py.
+
+o When an xTR determines it is not behind a NAT, it will not include an RTR
+  RLOC in its Map-Register. Thereby, when the Map-Server returns a Map-Reply
+  it will send an empty RLOC-set when it can return the global RLOC that the
+  ITR CAN reach. Fixed now.
+
+o Print RLOC-names out in blue so they stand out in log files and web pages.
+
+o Print out packet when it can be decapsulated but not decrypted.
+
+o The lisp-rtr processes, since it is co-located with the map-server, non
+  data-plane packets on the pcap interface. So when large Map-Register
+  messages are fragmented, the lisp-rtr process has to reassemble the datagram
+  and drop the packets that do not have port 4341 as the source or destination
+  port.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.391
+                --------------------------------------
+
+o Release date: Wed Aug 16 15:05:48 PDT 2017
+
+o Fix traceback in lisp_process_map_reply() when translated-rloc is not set.
+
+o Have env variable LISP_VIRTIO_BUG also do "checksum-fill" for IPv6 too.
+  That is, install both iptables and ip6tables rules.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.390
+                --------------------------------------
+
+o Release date: Fri Aug  4 13:53:24 PDT 2017
+
+o When signature fails, display the signature used in string format to copmare
+  what was in the RLOC-record.
+
+o When an IPv6 packet is received by an ITR and the encapsulation headers
+  prepended exceed the MTU, the outer IPv4 header must fragmented. This
+  is done because we cannot fragment the inner IPv6 header since the ITR is
+  not the originating source of the packet. So the IPv6 packet is encapsulated
+  once and the resulting IPv4 packet is split up into fragments. The ETR must
+  reassemble the IPv4 fragments, strip the outer IPv4, UDP, and LISP headers,
+  and then deliver one IPv6 packet to the destination.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.389
+                --------------------------------------
+
+o Release date: Tue Jul 25 17:58:16 PDT 2017
+
+o Make sure the inner source port of an ECM Map-Request is the translated
+  port when the ITR is behind a NAT and make sure the itr-rlocs in the Map-
+  Request contains a translated RLOC.
+
+o When the Map-Server sees a private RLOC address in the RLOC-set of an xTR
+  mapping, return to the Map-Requester the private RLOC as well as the RLOC
+  of the RTR. This is to allow an ITR to determine if the ETR is behind the
+  same NAT. And if so, it can encap directly to the local RLOC.
+
+o There is a new lisp.config.xtr-nat template file available so you have an
+  example of which "rloc" clause is used as the "translated address" and which
+  are used as local private addresses for local communication among xTRs behind
+  the same NAT. Send email to support@lispers.net for a new copy.
+
+o Fix bug where a Map-Reply that contains RLOC of other xTRs stores crypto
+  keys from the Map-Reply source. This was causing the RTRs crypto-keys to
+  be used to encrypt traffic to local RLOCs.
+
+o When a local RLOC with priority 1 goes unreachable, fix the best-RLOC-set
+  to include the RLOC with priority 2 (the RTR).
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.388
+                --------------------------------------
+
+o Release date: Thu Jul 13 16:42:11 PDT 2017
+
+o Change message in STOP-LISP to "Bypass removing LISP iptables, ITR
+  process not running".
+
+o New feature, add "send-map-request = yes | no" to an "eid-prefix" clause of a
+  "lisp map-cache" command. This instructs an ITR or RTR for a matching EID to
+  send a Map-Request to the mapping system.
+
+o Fix "referenced before assignment" traceback in lisp_itr_pcap_process_
+  packet().
+
+o Have lig prefer a private address RLOC so when Map-Request'ing the mapping
+  system it can use nat-traversal techniques to get a Map-Reply back. If
+  there are secondary addresses on the default route's interface, a non
+  private address could be selected which suppresses sending Info-Requests.
+
+o A "[0]no-address" was put into a JSON value for "signature-eid" in the
+  source-EID field of a Map-Request. Have the receiver log the fact when
+  it happens.
+
+o There is a case where a lisp-sig.pem file exists and we want to sign a
+  Map-Request but there is no signature-eid set. When an ITR signs a Map-
+  Request the source-EID should be used the signature-eid. If the source-EID
+  is not available, no signature is included. This could be the case when a 
+  lig is performed by the user and no "source <eid>" parameter is supplied.
+
+-------------------------------------------------------------------------------
+
+
+                lispers.net Beta Release Version 0.387
+                --------------------------------------
+
+o Release date: Tue Jul 11 15:55:13 PDT 2017
+
+o Do a test for env variable LISP_RTR_BEHIND_NAT when processing the RTR-list
+  given to an xTR from a map-server's Info Reply. This is causing suppression
+  of data-plane Info-Requests to an RTR with a private address.
+
+o If the translated RLOC is the same as the local RLOC, then do not have an
+  ETR register the RLOC ot the mapping system with an RTR. This means that
+  remote ITRs can encapsulate directly to this ETR since it is not residing
+  behind a NAT. As long as "nat-traversal=yes" is enabled, Info-Requests
+  are still sent just in case a NAT is placed in the data path.
+
+o Have env variable LISP_NO_IPTABLES not call remove-lisp-iptables.py in
+  STOP-LISP tcsh script so a user can control iptables when they see fit..
+
+o In RESTART-LISP use -E on sudo calls to STOP-LISP and RUN-LISP.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.386
+                --------------------------------------
+
+o Release date: Thu Jul  6 14:26:26 PDT 2017
+
+o Allow an xTR to be a router. That means while the system is running the
+  lispers.net code, allow non-EID to non-EID forwarding via the kernel. Also
+  allow local site EID-to-EID forwarding via the kernel. Therefore, the
+  iptables rules need to change to do the following. The fall through default
+  is to let the kernel handle all packets. And to have the xTR handle packets
+  from each DROP clause:
+
+    ip[6]tables -t raw -A lisp -j ACCEPT -d <special-addresses>
+    ip[6]tables -t raw -A lisp -j ACCEPT -d <local-address>
+    ip[6]tables -t raw -A lisp -j ACCEPT -s <site-eid> -d <site-eid>
+    ip[6]tables -t raw -A lisp -j DROP -s <site-eid>
+
+o Remove the LISP_NO_PCAP_FILTERS feature added in release 0.385. The
+  experiment is over.
+
+o When LISP_PCAP_LIST is supplied, make sure the interface exists before
+  asking pcappy to punt packets for the interface.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.385
+                --------------------------------------
+
+o Release date: Wed Jun 28 14:45:00 PDT 2017
+
+o Get Mac addresses for interfaces which have a hyphen in the device name.
+
+o Change ./pslisp to display both installed and running versions. Bold face
+  the version numbers in the display.
+
+o Set initialized boolean lisp_checkpoint_map_cache to False.
+
+o Check log files for Traceback messages when they may not be written to
+  lisp-traceback.log. When you click the hostname in the upper right hand
+  corner of any web page, it will tell you if Tracebacks were found in any
+  log file.
+
+o Put LISP_NO_PCAP_FILTERS in RUN-LISP. Allows user to control what gets to
+  the lisp-itr process. Defaults to off, meaning PCAP filters are performed
+  by default.
+
+o In the lisp-itr process, we were creating a new key for every RLOC-probe.
+  Reason being is that we were not finding the previous key from the lisp_
+  crypto_keys_by_rloc_encap{} because the RTR was using 4341 for the port
+  number and the ITR was using 0. Fixed now.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.384
+                --------------------------------------
+
+o Release date: Fri Jun 23 15:42:24 PDT 2017
+
+o By default, the lisp-itr process will pcap packets sourced by EIDs on each
+  interface on the system. An environment variable LISP_PCAP_LIST is introduced
+  in RUN-LISP to allow a sophsicated user to supply their own list of
+  interfaces to pcap on. This env variable is commented out in RUN-LISP so the
+  user has to manage their own RUN-LISP script which will be overwritten on
+  each new install.
+
+o By default, the lisp-itr process will make iptables and ip6tables rules
+  to tell kernel to drop packets sourced by EIDs. If the user has control
+  over what the kernel does, or has its own custom iptables rules, you can
+  tell the lispers.net code to not do any iptables rules. Use the environment
+  variable LISP_NO_IPTABLES in the RUN-LISP startup script. This env variable
+  is commented out in RUN-LISP so the user has to manage their own RUN-LISP
+  script which will be overwritten on each new install.
+
+o When displaying k flags in the LISP header, rather than display K1, K2, or
+  K3, display kK, Kk, KK, respectively, to be consistent with other flag
+  bit output.
+
+o Found bug where a kernel decap'ed packet that was encrypted was mistaken
+  as a packet with an outer IPv4 header. Of course, it was not, and the IPv4
+  checksum failed, so the packet was dropped versus decrypted and forwarded.
+
+o Get Mac addresses for interfaces which have a colon in the device name.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.383
+                --------------------------------------
+
+o Release date: Thu Jun 22 13:01:12 PDT 2017
+
+o When building EID 'hash-<eid-hash>' as an EID for a public-key lookup, make
+  sure each quad between colons are zero-filled to 16-bits and if there is a
+  leading byte before the quads that is part of the hash, make sure it is
+  zero-filled to 8-bits.
+
+o Put log messages in for "Start RLOC Probing" and "End RLOC Probing".
+
+o Do not encapsulate IPv6 link-local packets (i.e. destination fe80::/16) when
+  sourced by an IPv6 EID.
+
+o Fix typo "verficiation" in lisp_process_map_register().
+
+o Default checkpointing map-cache to disable. Use subcommand 'checkpoint-map-
+  cache = yes" under the "lisp xtr-parameters" to enable.
+
+o On the xTR side do not store key as <rtr-address>:0 when the default encap
+  port is 4341. This will cause the xTR to not find the encryption keys to
+  use for the packet before encapsulation. This bug was introduced when the
+  encap-side code was added for the RTR.
+
+o What a cool bug! Found a case where a 31-byte key was parsed from a Map-
+  Reply. This causes the cipher routines to crash. But the key was encoded as
+  a 32-byte quantity, the length in the Security LCAF was correct, but the key
+  had a high-order byte of 0 that wasn't stored internally.  Oops. ;-) This is
+  only a problem for keys used with EC25519 which is the default setting in the
+  lispers.net implementation.
+
+-------------------------------------------------------------------------------
+
+		lispers.net Beta Release Version 0.382
+                --------------------------------------
+
+o Release date: Mon Jun 19 21:00:24 PDT 2017
+
+o The RTR needs to be aware of multiple xTRs behind the same NAT for
+  encrypting packets to each with each of their encapsulation keys. The
+  support from RLOC-probing was not enough to keep keys separate. Fix now.
+
+o Change from printing first and last 4 bytes of the public keys in log
+  output to first and last 2 bytes.
+
+o For log output indicate if keys are for the "encap" direction or the "decap"
+  direction.
+
+o Make sure we don't rekey when the translated address and port change for
+  an xTR behind a NAT.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.381
+                --------------------------------------
+
+o Release date: Tue Jun 13 18:07:21 PDT 2017
+
+o Time out native-forward entries in the map-cache even though packets are
+  being sent to EID. Do this for auth-failure, policy-denied, and drop-action
+  entries as well.
+
+o When duplicating a command name inside of a "prefix" or "rloc" sub-command
+  of the "lisp database-mapping" command, a crash will occur. Fixed now so
+  when duplicates are used the last occurence is the stored value.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.380
+                --------------------------------------
+
+o Release date: Mon Jun 12 09:47:52 PDT 2017
+
+o Do not try to lookup lisp-crypto keys when no RLOC is supplied in a
+  RLOC-probe reply. This was causing keys for multiple xTRs behind the same
+  NAT to not get found in local data structures on an RTR.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.379
+                --------------------------------------
+
+o Release date: Fri Jun  9 11:31:46 PDT 2017
+
+o Support lisp-crypto when multiple xTRs are behind the same NAT. The RTR
+  was getting confused as to what lisp-crypto keys are associated with what
+  global translated RLOCs. The translated port needs to be part of the key
+  lookup.
+
+-------------------------------------------------------------------------------
+
+		lispers.net Beta Release Version 0.378
+                --------------------------------------
+
+o Release date: Wed Jun  7 11:48:34 PDT 2017
+
+o Fixed so lisp-crypto logging to remove extraneous info and add more relevant
+  info.
+
+o No need to do double lookup for keys in lisp_etr_process_map_request() and
+  lisp_rtr_process_map_request().
+
+o Print last 3 RTTs computed from rloc-probing. Show it in the "RLOC-Probe
+  Information" page. This provides information to know if the RTT has spiked
+  or is staying at an average level. Gives a rough approximation how the
+  underlay is performing.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.377
+                --------------------------------------
+
+o Release date: Fri Jun  2 14:55:50 PDT 2017
+
+o When a RLOC-set exists with a RTR record, a translated RLOC record, and
+  a signature record, and an RTR has sent a Map-Request, just return only the
+  translated RLOC. The only RLOC that the RTR needs for forwarding. That is,
+  do not return priority 255 RLOCs to the RTR.
+
+o Do not sign RLOC-probe Map-Requests. Right now they are not needed and a
+  receiver can't parse it. This broke RLOC-probing.
+
+o There was a bad typo in parsing the LISP data header. When trying to set the
+  I-bit, it was not setting bit-6 instead of bit-5. This is an incomptable
+  change. All xTRs and RTRs need upgrading!
+
+o Do not distance instance-ID for RLOCs in data-plane-logging output.
+
+o When multiple map-resovlers are configured, send Info-Requests to all of
+  them for robustness.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.376
+                --------------------------------------
+
+o Release date: Mon May 29 16:46:20 PDT 2017
+
+o Do not zero-fill bits in EID hash. Allow format to be like conventional IPv6
+  address encoding. Also, when computing signature over the instance-ID and
+  IPv6 address (in ascii) do not zero-fill the IPv6.
+
+o In a Map-Request make source-EID JSON string include "signature-eid" and
+  "packet-eid". An xTR that is signing a Map-Request for itself will have
+  a packet-eid equal to the signature-eid. But for an RTR that is signing
+  a Map-Request on behalf of the original source EID will use its own IPv6
+  EID as "signature-eid" that the signature is computed over. With this change
+  the JSON string no longer has key "eid". The key/value pairs now will be
+  { "source-eid" : "<eid-packet-source>", "signature-eid" : "<eid-map-
+  requester>" : "signature" : "<signature-data-over-nonce-seid-deid>" }.
+
+o Fixed outer IPv4 header length check bug introduced in a recent release.
+
+o Do not use source-EID to find a map-resolver on an RTR. If we did, we
+  would need instance-ID information in database-mapping commands for each
+  instance-ID client using the RTR.
+
+o Do not "touch lisp.config" when a clear-cache button is pressed unless there
+  are static "lisp map-cache" commands that exist. That will reduce the number
+  of times we read and process the configuration file.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.375
+                --------------------------------------
+
+o Release date: Sun May 21 15:35:32 PDT 2017
+
+o Do not prepend lisp.config diff changes to the lisp.config file. Put it in a
+  new file named lisp.config.diff.
+
+o Put a button on the System Status page that shows the diff file via the
+  web interface.
+
+o Require EID crypto-hash authentication. That means that if an IPv6 EID is
+  registered or requested and it matches a prefix from a "lisp crypto-eid-hash"
+  command, then its public-key will be looked up and the signature in the
+  Map-Register or Map-Request will be verified. Any other EID type or an IPv6
+  EID that is not a crypto-hashed address will be verified only via the PSK
+  configured mutually on the ETR and map-server. Note an RTR must be
+  configured with a crypto-EID so when it does lookups for crypto-EIDs, its
+  sigature can be verified. This is the case, when crypto-EIDs reside behind
+  NAT devices.
+
+o For ITRs and RTRs to send signed Map-Requests, they need a private key
+  file called 'lisp-sig.pem" in the lispers.net directory. Map-Requests will
+  be signed only for IPv6 EID lookups.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.374
+                --------------------------------------
+
+o Release date: Thu May 18 07:05:51 PDT 2017
+
+o Fix traceback in processing a Map-Notify-Ack.
+
+o If a ECM Map-Request is received by a map-server with a 0.0.0.0 source
+  address and it is rebuilt to send to an ETR, a 24-byte IP header is
+  erroneously built. That is 4 bytes (the source address) is not included
+  due to the 0.0.0.0 address received.
+
+o lisp-lig.py was not selecting an ITR-RLOC in a Map-Request. This was
+  happening because it could not find an eth or wlan interface. Make
+  lisp.lisp_get_local_rloc() more general to find an address.
+
+o Put hostname in lisp.config comment header. Make it easier when looking at
+  the file knowing who it belongs to.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.373
+                --------------------------------------
+
+o Release date: Thu May 11 14:30:29 PDT 2017
+
+o Allow "instance-id = *" sub-command for the "lisp eid-crypto-hash" command
+  clause. This way the same crypto hash-length can be used for EIDs for all
+  instance-IDs.
+
+o Did some column compaction on the ETR display to reduce required horizontal
+  space on display.
+
+o Modify how-to-install.txt for a new ubuntu install problem resolution when
+  trying to install python modules 'requests" and "geopy".
+
+o Do not use binascii.unhexlify() for decoding public-key strings. Use
+  binascii.a2b_base64() instead. Same for JSON encoded signature strings.
+
+o Replace the use of RSA with ECDSA. This change will require a "pip install
+  ecdsa==0.13". To make ECDSA signature and signature verfiication work, the
+  signer and verifier must use curve NIST256p and hash the signature data
+  with sha256. Important to get different implementations to interoperate
+  (like Go and Python).
+
+o JSON strings should be allowed to have '=" signs in them. Fix parser bug
+  to not truncate json strings.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.372
+                --------------------------------------
+
+o Release date: Wed May  3 14:01:45 PDT 2017
+
+o Allow configuration of an IPv6 EID cryptographic hash length. We are
+  introducing a new map-server command named "lisp eid-crypto-hash". Click
+  Documentation button on landing page for details. By default, when the
+  new command is not used, the default value for all IPv6 EID-prefixes is 64.
+  An IPv6 crypto hash-length can be different per instance-ID VPN.
+
+o Support multi-key support in the lisp-ms process according to draft-ietf-
+  lisp-rfc6833bis-04. In the "lisp site" command the "authentication-key" 
+  sub-command now takes on the form of "authentication-key = [<key-id-0-255>]
+  <string> ... [<key-id-0-255>]<string>". This allows to seamlessly rekey
+  xTRs in an incremental way.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.371
+                --------------------------------------
+
+o Release date: Fri Apr  7 11:21:39 PDT 2017
+
+o The lisp-itr process is not accepting MAC frames that are multicast
+  addressed. Fixed now.
+
+o Since the source of a Map-Notify that is received by the ITR is IPC'ed
+  from the lisp-etr proecss, the source in the message is "lisp-etr". This
+  isn't an address that we can store in the lisp_mapping() structure so
+  display it as "map-notify" and don't crash.
+
+o When running the lispers.net web server (input to RESTART-LISP is "-8080"
+  not over SSL, the bottle API does not understand the "fast=True" argument
+  so don't supply it.
+
+o If a Map-Notify is awaiting to be Map-Notify-Ack'ed and another Map-Notify
+  is generated for the same EID, you want the one waiting for the ack to be
+  removed from the map-notify retransmission queue. Otherwise, we lose
+  sequence of the latest state. This was causing the ITR to have an empty
+  RLE when members were joined to an (S,G). This bug occurs for unicast EIDs
+  as well.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.370
+                --------------------------------------
+
+o Release date: Mon Mar 20 16:01:19 PDT 2017
+
+o When processing a an IGMP report, the wrong address family was tagged
+  for the group address so the Map-Register group address does not reflect
+  the IGMP joined group address.
+
+o When printing out which IGMP packet types we don't support, include the
+  type value and type name.
+
+-------------------------------------------------------------------------------
+
+		lispers.net Beta Release Version 0.369
+                --------------------------------------
+
+o Release date: Fri Mar  3 10:57:43 PST 2017
+
+o Bold face action when empty RLOC-set returned in lig client.
+
+o Do not use private key file if source-eid is not supplied on command line.
+  Otherwise a bad json string is sent in the Map-Request.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.368
+                --------------------------------------
+
+o Release date: Thu Mar  2 22:41:43 PST 2017
+
+o Make sure rloc-set is empty when returning a action "auth-failure".
+
+o Do not use privkey_filename when ligging a non-IPv6 EID.
+
+o Use same ephemeral socket for Info-Requests as lig-requests. So NAT info
+  state is created on the map-server so Map-Replies can be returned to the
+  translated address and port.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.367
+                --------------------------------------
+
+o Release date: Tue Feb 28 17:21:24 PST 2017
+
+o Support for IPv6 crypto-hashed address registration and
+  authentication. When an IPv6 EID is registered with an RLOC-record
+  that contains a JSON string with the keyword "signature", we treat
+  the EID as a Crypto Generated Address and use the low-order 64-bits
+  as the hash of the public-key of the owner of the IPv6 address. The
+  signature is over string "[<iid>]<ipv6-eid>".  The public key is
+  obtained by looking up distinguished-name EID in the form of
+  'hash-<hash>' in the mapping database with same instance-ID used for
+  the EID is being registered. When this lookup returns an RLOC-record
+  that contains a JSON string with the keyword "public-key", we use
+  the value to verify the signature from the EID registration. The EID
+  that is being registered must ALSO know the Map-Register password it
+  shares with the Map-Server. Just because I can authenticate who I am
+  does not mean I can register in any VPN, any site, or use this
+  Map-Server.
+
+o To validate a Map-Requester, a crypto-hashed IPv6 Source-EID and
+  signature must be provided in the Map-Request message. The pair is
+  encoded in the source-EID field as a LCAF JSON Type with a JSON
+  string of { "eid" : "<ipv6-eid>", "signature" : "<sig>" }. Where the
+  JSON value <sig> is the signature over the source-EID and target-EID
+  in form of "[<iid>]<ipv6-eid>" as well as the Map-Request 64-bit
+  nonce. The requestor's crypto-hahsed EID hash must be registered to
+  the mapping system so the public-key can be obtained by the
+  Map-Server. If the Map-Server verifies the signature as correct,
+  then it will process the Map-Request. Otherwise, the Map-Request is
+  replied to with a negative Map-Reply with action "auth-failure".
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.366
+                --------------------------------------
+
+o Release date: Wed Jan 18 09:26:25 PST 2017
+
+o lisp-lig crashes if it can't find an RLOC on eth0. Bug is in function
+  lisp_get_local_rloc(). Stop it from crashing and try eth1 or any wlan
+  that could exist to find an RLOC if no IP address configured on eth0.
+
+o Have STOP-LISP no longer depend on killall. Do a ./pslisp internal to
+  the script and kill each process individually.
+
+o Have is-lisp-running.py show LISP subsystem processes and not any process
+  with the name "lisp" in it.
+
+-------------------------------------------------------------------------------
+
+		lispers.net Beta Release Version 0.365
+                --------------------------------------
+
+o Release date: Fri Jan  6 10:43:54 PST 2017
+
+o Updated lispers.net Copyright date.
+
+o On the map-cache display, the column header "RLOC State" is now a hyperlink
+  that takes you to a new page that shows you details about the RLOC-probing
+  data structures. This is available in lisp-itr and lisp-rtr processes.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.364
+                --------------------------------------
+
+o Release date: Fri Dec 30 12:08:50 PST 2016
+
+o tar is not writing tarball to "-o". Just have lisp-get-bits.py move file
+  named "file" to lispers.net conventional filename.
+
+o RTR RLOC-probes sent through NATs are not consistently setting an
+  instance-ID of 0xffffff in the LISP header. This is causing RLOCs to go
+  unreachable erroneously.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.363
+                --------------------------------------
+
+o Release date: Thu Dec 29 11:51:26 PST 2016
+
+o Fix lisp-get-bits.py so it can deal with a new Dropbox URL when there are
+  characters following "tgz'.
+
+o When configuring "checkpoint-map-cache = no" and it is already off, don't
+  try to remove the lisp.checkpoint file (which does not exist). Stops some
+  chattiness in log files.
+
+o Default instance-ID is not assigned to packet. When there are no "lisp
+  interface" commands configured, and there is a single (single-tenant)
+  instance-ID value configured in any "lisp database-mapping" prefixes, that
+  instance-ID value should be assigned to the packet.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.362
+                --------------------------------------
+
+o Release date: Wed Dec 28 19:11:43 PST 2016
+
+o Fix traceback in lisp_process_rloc_probe_timer(). Found in a-xtr1.
+
+o Put the RL script in the release. Name it RL-template. It does nothing by
+  default other than outputs a line "This RL-template script file needs to be
+  modified for your system and copied to file RL". When the fiel is modified,
+  it will start up the lispers.net LISP subsystem with specific parameters
+  relative to your system's environment. It also can confiugre local IPv4 and
+  IPv6 EIDs for your xTR and necessary IPv6 default route information.
+
+o I broke multi-tenant-eids. Fixed now.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.361
+                --------------------------------------
+
+o Release date: Mon Dec 26 15:56:10 PST 2016
+
+o When "lisp-nat = yes" is enabled and there are EIDs assigned to the loopback
+  interface of an xTR, we don't want to translate the address or else we
+  can't have it be a LISP site talking to other LISP sites.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.360
+                --------------------------------------
+
+o Release date: Thu Dec 22 16:25:50 PST 2016
+
+o Support VPN extra-netting for the Interworking case. See the "Command
+  Documentation" button for more details. We allow an EID in a non-0
+  instance-ID to use a shared service that belongs to another instance-ID or
+  instance-ID 0 (global core).
+
+o Allow the "instance-id" sub-command of the "lisp database-mapping" command
+  clause to take multiple instance-ID values. That list of instance-IDs will
+  cause an EID-prefix to be registered to each VPN.
+
+o Support a new command "secondary-instance-id" that allows multiple map-caches
+  to be used on an ITR and RTR. When LISP-site to LISP-site traffic occurs,
+  it happens on the primary instance-ID. When LISP-site to shared-service
+  traffic occurs (be it an EID in a LISP-site or a non-EID in a non-LISP site),
+  the secondary instance-ID is used to do map-cache lookups.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.359
+                --------------------------------------
+
+o Release date: Fri Dec 16 10:02:09 PST 2016
+
+o When an RLOC-probe reply is received by an RLOC-probe request sender and
+  the replier is merging registrations with other RLOCs, the request sender
+  inadvertently replaces the map-cache entry with the replier RLOC and wipes
+  out the other ones. Now fixed.
+
+o When clicking on the "clear cache" button, make sure the RLOC-probe list
+  data structure is cleared so we don't have RLOC-probe replies create map-
+  cache entries that do not reflect the RLOC-records in the mapping database.
+
+o When a map-reply is received for an existing map-cache entry, do not raise
+  the TTL for the entry. RLOC-probes were resetting a 15-minute TTL for a
+  map-cache entry to 24 hours.
+
+o When "force-ttl" was configured on the map-server, it was replying with a
+  ttl of 15 minutes. That is because force-nat-proxy-reply was overriding
+  the force-ttl value.
+
+o Remove RLOCs from rloc-probe-list when map-cache entries timeout.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.358
+                --------------------------------------
+
+o Release date: Tue Dec 13 10:59:44 PST 2016
+
+o When showing the site-cache on the map-server, do not display registered
+  "no" in red boldface for sites that have EID-prefixes with "accept-more-
+  specifics" configured. We want to see zero red on this display when
+  everyone is registered.
+
+o When any debug logging is disabled, in the "manage logging" pull-down menu,
+  the first option is to "disable all logging". Which is a one-click selection
+  to disable all logging.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.357
+                --------------------------------------
+
+o Release date: Mon Dec 12 12:07:22 PST 2016
+
+o When displaying the LISP-header when ITR or ETR logging is enabled, dislay
+  8 hex digits (that is 0-fill high-order bits).
+
+o Put colon after "Configured JSON Entries:".
+
+o Do not write entries to lisp.checkpoint files if there is no RLOC.
+
+o Have RUN-LISP define an environment variable LISP_LOAD_SPLIT_PINGS that is
+  commented out. But when used, the lisp-itr and lisp-rtr processes will
+  load-split ping packets to an EID across all equal-priority RLOCs. That is,
+  the first 4 bytes of the ICMP header is used with the source and destination
+  addresses for the RLOC hash index. Used for testing purposes only.
+
+o Updated how-to-install.txt to tell users to use ./RESTART-LISP versus
+  ./RUN-LISP just in case they forget to type "sudo ./RUN-LISP".
+
+o Implement support for RFC6832 LISP Interworking feature LISP-NAT. Introduce
+  "lisp-nat = yes | no" in the "lisp interface" command clause. See file
+  lisp.config.example for details. Supported only for IPv4 EIDs right now.
+  This is supported by the lisp-itr and lisp-etr processes. Therefore, this
+  cannot be run in a system where an RTR is configured. This feature
+  implements a PxTR but in the case of a PITR, there is no route injection
+  packets arrive to the PITR via header translation of previously originated
+  packets from a LISP-site.
+
+-------------------------------------------------------------------------------
+
+                lispers.net Beta Release Version 0.356
+                --------------------------------------
+
+o Release date: Tue Dec  6 14:53:15 PST 2016
+
+o Display map-cache stat counts in boldface green when packet encapsulated
+  with the last second and in boldface red within the last minute, black
+  otherwise.
+
+-------------------------------------------------------------------------------
