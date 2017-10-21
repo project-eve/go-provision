@@ -20,6 +20,14 @@ package main
 
 import (
 	"crypto/sha256"
+	"crypto/x509"
+	"crypto"
+	"crypto/rsa"
+	"crypto/ecdsa"
+	"crypto/dsa"
+	"encoding/pem"
+	"math/big"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/zededa/go-provision/types"
@@ -36,35 +44,39 @@ var imgCatalogDirname string
 
 func main() {
 	log.Printf("Starting verifier\n")
+
 	watch.CleanupRestarted("verifier")
-	
+
 	// Keeping status in /var/run to be clean after a crash/reboot
 	baseDirname := "/var/tmp/verifier"
 	runDirname := "/var/run/verifier"
 	configDirname := baseDirname + "/config"
 	statusDirname := runDirname + "/status"
 	imgCatalogDirname = "/var/tmp/zedmanager/downloads"
+
 	pendingDirname := imgCatalogDirname + "/pending"
 	verifierDirname := imgCatalogDirname + "/verifier"
 	verifiedDirname := imgCatalogDirname + "/verified"
-	
+
 	if _, err := os.Stat(baseDirname); err != nil {
-		if err := os.Mkdir(baseDirname, 0700); err != nil {
+		if err := os.MkdirAll(baseDirname, 0700); err != nil {
 			log.Fatal(err)
 		}
 	}
+
 	if _, err := os.Stat(configDirname); err != nil {
-		if err := os.Mkdir(configDirname, 0700); err != nil {
+		if err := os.MkdirAll(configDirname, 0700); err != nil {
 			log.Fatal(err)
 		}
 	}
 	if _, err := os.Stat(runDirname); err != nil {
-		if err := os.Mkdir(runDirname, 0700); err != nil {
+		if err := os.MkdirAll(runDirname, 0700); err != nil {
 			log.Fatal(err)
 		}
 	}
+
 	if _, err := os.Stat(statusDirname); err != nil {
-		if err := os.Mkdir(statusDirname, 0700); err != nil {
+		if err := os.MkdirAll(statusDirname, 0700); err != nil {
 			log.Fatal(err)
 		}
 	}
@@ -79,16 +91,15 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	
-		
+
 	if _, err := os.Stat(imgCatalogDirname); err != nil {
-		if err := os.Mkdir(imgCatalogDirname, 0700); err != nil {
+		if err := os.MkdirAll(imgCatalogDirname, 0700); err != nil {
 			log.Fatal(err)
 		}
 	}
-	
+
 	if _, err := os.Stat(pendingDirname); err != nil {
-		if err := os.Mkdir(pendingDirname, 0700); err != nil {
+		if err := os.MkdirAll(pendingDirname, 0700); err != nil {
 			log.Fatal(err)
 		}
 	}
@@ -97,19 +108,19 @@ func main() {
 		log.Fatal(err)
 	}
 	if _, err := os.Stat(verifierDirname); err != nil {
-		if err := os.Mkdir(verifierDirname, 0700); err != nil {
+		if err := os.MkdirAll(verifierDirname, 0700); err != nil {
 			log.Fatal(err)
 		}
 	}
 	if _, err := os.Stat(verifiedDirname); err != nil {
-		if err := os.Mkdir(verifiedDirname, 0700); err != nil {
+		if err := os.MkdirAll(verifiedDirname, 0700); err != nil {
 			log.Fatal(err)
 		}
 	}
 
 	// Creates statusDir entries for already verified files
 	handleInit(verifiedDirname, statusDirname, "")
-	
+
 	fileChanges := make(chan string)
 	go watch.WatchConfigStatusAllowInitialConfig(configDirname,
 		statusDirname, fileChanges)
@@ -194,9 +205,9 @@ func handleCreate(statusFilename string, configArg interface{}) {
 	// Move to verifier directory which is RO
 	// XXX should have dom0 do this and/or have RO mounts
 	srcDirname := imgCatalogDirname + "/pending/" + config.ImageSha256
-	srcFilename := srcDirname + "/" + config.Safename	
+	srcFilename := srcDirname + "/" + config.Safename
 	destDirname := imgCatalogDirname + "/verifier/" + config.ImageSha256
-	destFilename := destDirname + "/" + config.Safename	
+	destFilename := destDirname + "/" + config.Safename
 	fmt.Printf("Move from %s to %s\n", srcFilename, destFilename)
 	if _, err := os.Stat(destDirname); err != nil {
 		if err := os.MkdirAll(destDirname, 0700); err != nil {
@@ -222,10 +233,13 @@ func handleCreate(statusFilename string, configArg interface{}) {
 		status.State = types.INITIAL
 		writeVerifyImageStatus(&status, statusFilename)
 		log.Printf("handleCreate failed for %s\n", config.DownloadURL)
-		return		
+		return
 	}
 	defer f.Close()
 
+
+	//copmpute sha256 of the image and match it 
+	//with the one in config file...
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
 		status.LastErr = fmt.Sprintf("%v", err)
@@ -233,9 +247,10 @@ func handleCreate(statusFilename string, configArg interface{}) {
 		status.State = types.INITIAL
 		writeVerifyImageStatus(&status, statusFilename)
 		log.Printf("handleCreate failed for %s\n", config.DownloadURL)
-		return		
+		return
 	}
 
+	imageHash := h.Sum(nil)
 	got := fmt.Sprintf("%x", h.Sum(nil))
 	if got != config.ImageSha256 {
 		fmt.Printf("got      %s\n", got)
@@ -249,6 +264,165 @@ func handleCreate(statusFilename string, configArg interface{}) {
 		log.Printf("handleCreate failed for %s\n", config.DownloadURL)
 		return
 	}
+
+	//Read the server certificate
+        //Decode it and parse it
+        //And find out the puplic key and it's type
+	//we will use this certificate for both cert chain verification 
+        //and signature verification...
+
+	baseCertDirname := "/var/tmp/zedmanager"
+	certificateDirname := baseCertDirname+"/cert"
+	rootCertDirname := "/opt/zededa/etc"
+	rootCertFileName := rootCertDirname+"/root-certificate.pem"
+
+	//This func literal will take care of writing status during 
+	//cert chain and signature verification...
+	UpdateStatusWhileVerifyingSignature := func (lastErr string){
+		status.LastErr = lastErr
+		status.LastErrTime = time.Now()
+		status.PendingAdd = false
+		status.State = types.INITIAL
+		writeVerifyImageStatus(&status, statusFilename)
+		log.Printf("handleCreate failed for %s\n", config.DownloadURL)
+    }
+
+	serverCertName := config.SignatureKey
+        serverCertificate, err := ioutil.ReadFile(certificateDirname+"/"+serverCertName)
+        if err != nil {
+		readCertFailErr := fmt.Sprintf("unable to read the certificate")
+		log.Println(readCertFailErr)
+		UpdateStatusWhileVerifyingSignature(readCertFailErr)
+		fmt.Println(err)
+		return
+        }
+        block, _ := pem.Decode(serverCertificate)
+        if block == nil {
+		decodeFailedErr := fmt.Sprintf("unable to decode certificate")
+		log.Println(decodeFailedErr)
+		UpdateStatusWhileVerifyingSignature(decodeFailedErr)
+		return
+        }
+        cert, err := x509.ParseCertificate(block.Bytes)
+        if err != nil {
+		parseFailedErr := fmt.Sprintf("unable to parse certificate")
+		log.Println(parseFailedErr)
+		UpdateStatusWhileVerifyingSignature(parseFailedErr)
+		return
+        }
+
+        //Verify chain of certificates. Chain contains
+	//root, server, intermediate certificates ...
+
+	certificateNameInChain := config.CertificateChain
+
+	//Create the set of root certificates...
+	roots := x509.NewCertPool()
+
+	//read the root cerificates from /opt/zededa/etc/...
+	rootCertificate, err := ioutil.ReadFile(rootCertFileName)
+	if err != nil {
+		fmt.Println(err)
+		unableToFindRootCertErr := fmt.Sprintf("failed to find root certificate")
+		log.Println(unableToFindRootCertErr)
+		UpdateStatusWhileVerifyingSignature(unableToFindRootCertErr)
+		return
+	}
+	ok := roots.AppendCertsFromPEM(rootCertificate)
+	if !ok {
+		rootParseFailedErr := fmt.Sprintf("failed to parse root certificate")
+		log.Println(rootParseFailedErr)
+		UpdateStatusWhileVerifyingSignature(rootParseFailedErr)
+		return
+	}
+
+        length := len(certificateNameInChain)
+	for c := 0 ; c < length; c++ { 
+
+		certNameFromChain, err := ioutil.ReadFile(certificateDirname+"/"+certificateNameInChain[c])
+		if err != nil {
+			fmt.Println(err)
+		}
+		
+		ok := roots.AppendCertsFromPEM(certNameFromChain)
+		if !ok {
+			intermediateCertParseFailedErr := fmt.Sprintf("failed to parse intermediate certificate")
+			log.Println(intermediateCertParseFailedErr)
+			UpdateStatusWhileVerifyingSignature(intermediateCertParseFailedErr)
+			return
+		}
+	}
+	opts := x509.VerifyOptions{
+                Roots:   roots,
+        }
+        if _, err := cert.Verify(opts); err != nil {
+		certChainVerificationErr := fmt.Sprintf("failed to verify certificate chain: ")
+		log.Println(certChainVerificationErr)
+		UpdateStatusWhileVerifyingSignature(certChainVerificationErr)
+		return
+        }else {
+                log.Println("certificate verified")
+        }
+
+        //Read the signature from config file...
+        imgSig := config.ImageSignature
+        if err != nil {
+                log.Println(err)
+		signatureNotFoundErr := fmt.Sprintf("image signature not found")
+		UpdateStatusWhileVerifyingSignature(signatureNotFoundErr)
+		return
+        }
+
+        switch pub := cert.PublicKey.(type) {
+        case *rsa.PublicKey:
+
+                err = rsa.VerifyPKCS1v15(pub, crypto.SHA256, imageHash, imgSig)
+                if err != nil {
+			log.Fatalf("VerifyPKCS1v15 failed...")
+			rsaSignatureVerificationFiledErr := fmt.Sprintf("rsa image signature verification failed")
+			UpdateStatusWhileVerifyingSignature(rsaSignatureVerificationFiledErr)
+			return
+
+                } else {
+                        log.Printf("VerifyPKCS1v15 successful...")
+                }
+
+        case *dsa.PublicKey:
+
+                log.Printf("pub is of type DSA: ",pub)
+
+        case *ecdsa.PublicKey:
+
+                log.Printf("pub is of type ecdsa: ",pub)
+                imgSignature, err := base64.StdEncoding.DecodeString(string(imgSig))
+                if err != nil {
+                        fmt.Println("DecodeString: ", err)
+                }
+                log.Printf("Decoded imgSignature (len %d): % x\n", len(imgSignature), imgSignature)
+                rbytes := imgSignature[0:32]
+                sbytes := imgSignature[32:]
+                fmt.Printf("Decoded r %d s %d\n", len(rbytes), len(sbytes))
+                r := new(big.Int)
+                s := new(big.Int)
+                r.SetBytes(rbytes)
+                s.SetBytes(sbytes)
+                log.Printf("Decoded r, s: %v, %v\n", r, s)
+		ok := ecdsa.Verify(pub, imageHash, r, s)
+		if !ok {
+			log.Printf("ecdsa.Verify failed")
+			ecdsaSignatureVerificationFiledErr := fmt.Sprintf("ecdsa image signature verification failed ")
+			UpdateStatusWhileVerifyingSignature(ecdsaSignatureVerificationFiledErr)
+			return
+		}
+		log.Printf("Signature verified\n")
+
+        default:
+		unknownPublicKeyTypeErr := fmt.Sprintf("unknown type of public key")
+		log.Println(unknownPublicKeyTypeErr)
+		UpdateStatusWhileVerifyingSignature(unknownPublicKeyTypeErr)
+                return
+        }
+
 	// Move directory from downloads/verifier to downloads/verified
 	// XXX should have dom0 do this and/or have RO mounts
 	finalDirname := imgCatalogDirname + "/verified/" + config.ImageSha256
@@ -279,12 +453,12 @@ func handleCreate(statusFilename string, configArg interface{}) {
 				config.ImageSha256, location.Name(),
 				config.Safename)
 		}
-		
+
 		if err := os.RemoveAll(finalDirname); err != nil {
 			log.Fatal(err)
 		}
 	}
-	if err := os.Mkdir(finalDirname, 0700); err != nil {
+	if err := os.MkdirAll(finalDirname, 0700); err != nil {
 		log.Fatal( err)
 	}
 	if err := os.Rename(destFilename, finalFilename); err != nil {
@@ -293,7 +467,7 @@ func handleCreate(statusFilename string, configArg interface{}) {
 	if err := os.Chmod(finalDirname, 0500); err != nil {
 		log.Fatal(err)
 	}
-	
+
 
 	status.PendingAdd = false
 	status.State = types.DELIVERED
@@ -333,7 +507,7 @@ func handleModify(statusFilename string, configArg interface{},
 			config.DownloadURL)
 		return
 	}
-	   
+
 	status.PendingModify = true
 	writeVerifyImageStatus(status, statusFilename)
 	handleDelete(statusFilename, status)
