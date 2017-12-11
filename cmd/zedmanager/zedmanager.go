@@ -12,7 +12,6 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"github.com/zededa/go-provision/types"
 	"github.com/zededa/go-provision/watch"
@@ -27,25 +26,16 @@ const (
 	runDirname               = "/var/run/zedmanager"
 	zedmanagerConfigDirname  = baseDirname + "/config"
 	zedmanagerStatusDirname  = runDirname + "/status"
-	verifierConfigDirname    = "/var/tmp/verifier/config"
-	downloaderConfigDirname  = "/var/tmp/downloader/config"
 	domainmgrConfigDirname   = "/var/tmp/domainmgr/config"
 	zedrouterConfigDirname   = "/var/tmp/zedrouter/config"
 	identitymgrConfigDirname = "/var/tmp/identitymgr/config"
+	verifierConfigDirname    = "/var/tmp/verifier/appImg.obj/config"
+	downloaderConfigDirname  = "/var/tmp/downloader/appImg.obj/config"
 )
-
-// Set from Makefile
-var Version = "No version specified"
 
 func main() {
 	log.SetOutput(os.Stdout)
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.LUTC)
-	versionPtr := flag.Bool("v", false, "Version")
-	flag.Parse()
-	if *versionPtr {
-		fmt.Printf("%s: %s\n", os.Args[0], Version)
-		return
-	}
 	log.Printf("Starting zedmanager\n")
 	watch.CleanupRestarted("zedmanager")
 	watch.CleanupRestart("downloader")
@@ -55,8 +45,8 @@ func main() {
 	watch.CleanupRestart("domainmgr")
 	watch.CleanupRestart("zedagent")
 
-	verifierStatusDirname := "/var/run/verifier/status"
-	downloaderStatusDirname := "/var/run/downloader/status"
+	verifierStatusDirname := "/var/run/verifier/appImg.obj/status"
+	downloaderStatusDirname := "/var/run/downloader/appImg.obj/status"
 	domainmgrStatusDirname := "/var/run/domainmgr/status"
 	zedrouterStatusDirname := "/var/run/zedrouter/status"
 	identitymgrStatusDirname := "/var/run/identitymgr/status"

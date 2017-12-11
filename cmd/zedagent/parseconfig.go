@@ -351,7 +351,7 @@ func writeCertConfig(image types.StorageConfig, certUrl string) {
 		Password:        image.Password,
 		ImageSha256:     "",
 		DownloadObjDir:  certsDownloadDirname,
-		VerifiedObjDir:  certificateDirname,
+		FinalObjDir :    certificateDirname,
 		RefCount:        1,
 	}
 

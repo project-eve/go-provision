@@ -23,7 +23,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
-	"flag"
 	"fmt"
 	"github.com/zededa/go-provision/types"
 	"github.com/zededa/go-provision/watch"
@@ -38,209 +37,104 @@ import (
 
 // Keeping status in /var/run to be clean after a crash/reboot
 const (
-	// If this file is present we don't delete verified files in handleDelete
-	preserveFilename = "/var/tmp/verifier/config/preserve"
-	baseDirname = "/var/tmp/verifier"
-	runDirname = "/var/run/verifier"
-	configDirname = baseDirname + "/config"
-	statusDirname = runDirname + "/status"
-	imgCatalogDirname = "/var/tmp/zedmanager/downloads"
-	pendingDirname = imgCatalogDirname + "/pending"
-	verifierDirname = imgCatalogDirname + "/verifier"
-	finalDirname = imgCatalogDirname + "/verified"
-	certificateDirname = "/var/tmp/zedmanager/certs"
-	rootCertDirname = "/opt/zededa/etc"
+	appImgObj    = "appImg.obj"
+	baseOsObj    = "baseOs.obj"
+
+	certsDirname     = "/var/tmp/zedmanager/certs"
+	rootCertDirname  = "/opt/zededa/etc"
 	rootCertFileName = rootCertDirname + "/root-certificate.pem"
+
+	// If this file is present we don't delete verified files in handleDelete
+	preserveFilename = baseDirname + "/config/preserve"
+
+	baseDirname    = "/var/tmp/verifier"
+	runDirname     = "/var/run/verifier"
+	objDnldDirname = "/var/tmp/zedmanager/downloads"
+
+	appImgBaseDirname   = baseDirname + "/" + appImgObj
+	appImgRunDirname    = runDirname + "/" + appImgObj
+	appImgConfigDirname = appImgBaseDirname + "/config"
+	appImgStatusDirname = appImgRunDirname + "/status"
+
+	baseOsBaseDirname   = baseDirname + "/" + baseOsObj
+	baseOsRunDirname    = runDirname + "/" + baseOsObj
+	baseOsConfigDirname = baseOsBaseDirname + "/config"
+	baseOsStatusDirname = baseOsRunDirname + "/status"
+
+	appImgCatalogDirname  = objDnldDirname + "/" + appImgObj
+	appImgPendingDirname  = appImgCatalogDirname + "/pending"
+	appImgVerifierDirname = appImgCatalogDirname + "/verifier"
+	appImgVerifiedDirname = appImgCatalogDirname + "/verified"
+
+	baseOsCatalogDirname  = objDnldDirname + "/" + baseOsObj
+	baseOsPendingDirname  = baseOsCatalogDirname + "/pending"
+	baseOsVerifierDirname = baseOsCatalogDirname + "/verifier"
+	baseOsVerifiedDirname = baseOsCatalogDirname + "/verified"
 )
 
-// Set from Makefile
-var Version = "No version specified"
-
 func main() {
+
 	log.SetOutput(os.Stdout)
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.LUTC)
-	versionPtr := flag.Bool("v", false, "Version")
-	flag.Parse()
-	if *versionPtr {
-		fmt.Printf("%s: %s\n", os.Args[0], Version)
-		return
-	}
 	log.Printf("Starting verifier\n")
 
 	watch.CleanupRestarted("verifier")
 
-	if _, err := os.Stat(baseDirname); err != nil {
-		if err := os.MkdirAll(baseDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-
-	if _, err := os.Stat(configDirname); err != nil {
-		if err := os.MkdirAll(configDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-	if _, err := os.Stat(runDirname); err != nil {
-		if err := os.MkdirAll(runDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-
-	if _, err := os.Stat(statusDirname); err != nil {
-		if err := os.MkdirAll(statusDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-	// Don't remove directory since there is a watch on it
-	locations, err := ioutil.ReadDir(statusDirname)
-	if err != nil {
-		log.Fatal(err)
-	}
-	// Mark as PendingDelete and later purge such entries
-	for _, location := range locations {
-		if !strings.HasSuffix(location.Name(), ".json") {
-			continue
-		}
-		status := types.VerifyImageStatus{}
-		statusFile := statusDirname + "/" + location.Name()
-		cb, err := ioutil.ReadFile(statusFile)
-		if err != nil {
-			log.Printf("%s for %s\n", err, statusFile)
-			continue
-		}
-		if err := json.Unmarshal(cb, &status); err != nil {
-			log.Printf("%s file: %s\n",
-				err, statusFile)
-			continue
-		}
-		status.PendingDelete = true
-		writeVerifyImageStatus(&status, statusFile)
-	}
-
-	if _, err := os.Stat(imgCatalogDirname); err != nil {
-		if err := os.MkdirAll(imgCatalogDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-
-	if _, err := os.Stat(pendingDirname); err != nil {
-		if err := os.MkdirAll(pendingDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-	// Remove any files which didn't make it past the verifier
-	if err := os.RemoveAll(verifierDirname); err != nil {
-		log.Fatal(err)
-	}
-	if _, err := os.Stat(verifierDirname); err != nil {
-		if err := os.MkdirAll(verifierDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-	if _, err := os.Stat(finalDirname); err != nil {
-		if err := os.MkdirAll(finalDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-
-	// Creates statusDir entries for already verified files
-	handleInit(finalDirname, statusDirname, "")
-
-	// Delete any still marked as PendingDelete
-	for _, location := range locations {
-		if !strings.HasSuffix(location.Name(), ".json") {
-			continue
-		}
-		status := types.VerifyImageStatus{}
-		statusFile := statusDirname + "/" + location.Name()
-		cb, err := ioutil.ReadFile(statusFile)
-		if err != nil {
-			log.Printf("%s for %s\n", err, statusFile)
-			continue
-		}
-		if err := json.Unmarshal(cb, &status); err != nil {
-			log.Printf("%s file: %s\n",
-				err, statusFile)
-			continue
-		}
-		if status.PendingDelete {
-			log.Printf("still PendingDelete; delete %s\n",
-				statusFile)
-			if err := os.RemoveAll(statusFile); err != nil {
-				log.Fatal(err)
-			}
-		}
-	}
+	handleInit()
 
 	// Report to zedmanager that init is done
 	watch.SignalRestarted("verifier")
 
-	fileChanges := make(chan string)
-	go watch.WatchConfigStatusAllowInitialConfig(configDirname,
-		statusDirname, fileChanges)
+	appImgChanges := make(chan string)
+	baseOsChanges := make(chan string)
+
+	go watch.WatchConfigStatusAllowInitialConfig(appImgConfigDirname,
+			 appImgStatusDirname, appImgChanges)
+
+	go watch.WatchConfigStatusAllowInitialConfig(baseOsConfigDirname,
+			 baseOsStatusDirname, baseOsChanges)
+
 	for {
-		change := <-fileChanges
-		watch.HandleConfigStatusEvent(change,
-			configDirname, statusDirname,
-			&types.VerifyImageConfig{},
-			&types.VerifyImageStatus{},
-			handleCreate, handleModify, handleDelete, nil)
+
+		select {
+		case change := <-appImgChanges:
+			{
+				go watch.HandleConfigStatusEvent(change,
+						appImgConfigDirname,
+						appImgStatusDirname,
+						&types.VerifyImageConfig{},
+						&types.VerifyImageStatus{},
+						handleCreate,
+						handleModify,
+						handleDelete, nil)
+				continue
+			}
+		case change := <-baseOsChanges:
+			{
+				go watch.HandleConfigStatusEvent(change,
+						baseOsConfigDirname,
+						baseOsStatusDirname,
+						&types.VerifyImageConfig{},
+						&types.VerifyImageStatus{},
+						handleCreate,
+						handleModify,
+						handleDelete, nil)
+				continue
+			}
+		}
 	}
 }
 
 // Determine which files we have already verified and set status for them
-func handleInit(finalDirname string, statusDirname string,
-	parentDirname string) {
-	fmt.Printf("handleInit(%s, %s, %s)\n",
-		finalDirname, statusDirname, parentDirname)
-	locations, err := ioutil.ReadDir(finalDirname)
-	if err != nil {
-		log.Fatal(err)
-	}
-	for _, location := range locations {
-		filename := finalDirname + "/" + location.Name()
-		fmt.Printf("handleInit: Looking in %s\n", filename)
-		if location.IsDir() {
-			handleInit(filename, statusDirname, location.Name())
-		} else {
-			// XXX should really re-verify the image on reboot/restart
-			// We don't know the URL; Pick a name which is unique
-			sha := parentDirname
-			safename := location.Name() + "." + sha
-			status := types.VerifyImageStatus{
-				Safename:    safename,
-				ImageSha256: sha,
-				State:       types.DELIVERED,
-			}
-			writeVerifyImageStatus(&status,
-				statusDirname+"/"+safename+".json")
-		}
-	}
-	fmt.Printf("handleInit done for %s, %s, %s\n",
-		finalDirname, statusDirname, parentDirname)
-}
+func handleInit() {
 
-func updateVerifyErrStatus(status *types.VerifyImageStatus,
-	lastErr string, statusFilename string) {
-	status.LastErr = lastErr
-	status.LastErrTime = time.Now()
-	status.PendingAdd = false
-	status.State = types.INITIAL
-	writeVerifyImageStatus(status, statusFilename)
-}
+	sanitizeDirs()
 
-func writeVerifyImageStatus(status *types.VerifyImageStatus,
-	statusFilename string) {
-	b, err := json.Marshal(status)
-	if err != nil {
-		log.Fatal(err, "json Marshal VerifyImageStatus")
-	}
-	// We assume a /var/run path hence we don't need to worry about
-	// partial writes/empty files due to a kernel crash.
-	err = ioutil.WriteFile(statusFilename, b, 0644)
-	if err != nil {
-		log.Fatal(err, statusFilename)
-	}
+	handleWorkinProgresObjects ()
+
+	handleVerifiedObjects()
+
+	handleMarkedDeletePendingObjects ()
 }
 
 func handleCreate(statusFilename string, configArg interface{}) {
@@ -252,55 +146,70 @@ func handleCreate(statusFilename string, configArg interface{}) {
 	case *types.VerifyImageConfig:
 		config = configArg.(*types.VerifyImageConfig)
 	}
+
 	log.Printf("handleCreate(%v) for %s\n",
 		config.Safename, config.DownloadURL)
+
 	// Start by marking with PendingAdd
 	status := types.VerifyImageStatus{
 		Safename:    config.Safename,
 		ImageSha256: config.ImageSha256,
 		PendingAdd:  true,
 		State:       types.DOWNLOADED,
+		ObjType:	 config.ObjType,
 		RefCount:    config.RefCount,
 	}
-	writeVerifyImageStatus(&status, statusFilename)
+	writeVerifyObjectStatus(&status, statusFilename)
 
 	// Form the unique filename in /var/tmp/zedmanager/downloads/pending/
 	// based on the claimed Sha256 and safename, and the same name
 	// in downloads/verifier/. Form a shorter name for
 	// downloads/verified/.
-	myPendingDirname := pendingDirname + "/" + config.ImageSha256
-	pendingFilename := myPendingDirname + "/" + config.Safename
-	myVerifierDirname := verifierDirname + "/" + config.ImageSha256
-	verifierFilename := myVerifierDirname + "/" + config.Safename
+
+	dnldDirname      := objDnldDirname + "/" + config.ObjType
+	pendingDirname   := dnldDirname + "/pending/"  + status.ImageSha256
+	verifierDirname  := dnldDirname + "/verifier/" + status.ImageSha256
+	verifiedDirname  := dnldDirname + "/verified/" + config.ImageSha256
+
+	pendingFilename  := pendingDirname  + "/" + config.Safename
+	verifierFilename := verifierDirname + "/" + config.Safename
+	verifiedFilename := verifiedDirname + "/" + config.Safename
 
 	// Move to verifier directory which is RO
 	// XXX should have dom0 do this and/or have RO mounts
 	fmt.Printf("Move from %s to %s\n", pendingFilename, verifierFilename)
+
 	if _, err := os.Stat(pendingFilename); err != nil {
 		log.Fatal(err)
 	}
-	if _, err := os.Stat(myVerifierDirname); err == nil {
-		if err := os.RemoveAll(myVerifierDirname); err != nil {
+
+	if _, err := os.Stat(verifierDirname); err == nil {
+		if err := os.RemoveAll(verifierDirname); err != nil {
 			log.Fatal(err)
 		}
 	}
-	if err := os.MkdirAll(myVerifierDirname, 0700); err != nil {
+
+	if err := os.MkdirAll(verifierDirname, 0700); err != nil {
 		log.Fatal(err)
 	}
 
 	if err := os.Rename(pendingFilename, verifierFilename); err != nil {
 		log.Fatal(err)
 	}
-	if err := os.Chmod(myVerifierDirname, 0500); err != nil {
+
+	if err := os.Chmod(verifierDirname, 0500); err != nil {
 		log.Fatal(err)
 	}
+
 	if err := os.Chmod(verifierFilename, 0400); err != nil {
 		log.Fatal(err)
 	}
+
 	// Clean up empty directory
-	if err := os.Remove(myPendingDirname); err != nil {
+	if err := os.Remove(pendingDirname); err != nil {
 		log.Fatal(err)
 	}
+
 	log.Printf("Verifying URL %s file %s\n",
 		config.DownloadURL, verifierFilename)
 
@@ -327,35 +236,37 @@ func handleCreate(statusFilename string, configArg interface{}) {
 	imageHash := h.Sum(nil)
 	got := fmt.Sprintf("%x", h.Sum(nil))
 	if got != strings.ToLower(config.ImageSha256) {
-		fmt.Printf("got      %s\n", got)
-		fmt.Printf("expected %s\n", strings.ToLower(config.ImageSha256))
-		cerr := fmt.Sprintf("got %s expected %s", got, config.ImageSha256)
+		fmt.Printf("computed      %s\n", got)
+		fmt.Printf("configured %s\n", strings.ToLower(config.ImageSha256))
+		cerr := fmt.Sprintf("computed %s configured %s", got, config.ImageSha256)
 		status.PendingAdd = false
 		updateVerifyErrStatus(&status, cerr, statusFilename)
 		log.Printf("handleCreate failed for %s\n", config.DownloadURL)
 		return
 	}
 
-	if cerr := verifyObjectShaSignature(&status, config, imageHash, statusFilename); cerr != "" {
+	if cerr := verifyObjectShaSignature(&status, config,
+					imageHash, statusFilename); cerr != "" {
 		updateVerifyErrStatus(&status, cerr, statusFilename)
 		log.Printf("handleCreate failed for %s\n", config.DownloadURL)
 		return
 	}
+
 	// Move directory from downloads/verifier to downloads/verified
 	// XXX should have dom0 do this and/or have RO mounts
-	myFinalDirname := finalDirname + "/" + config.ImageSha256
 	filename := types.SafenameToFilename(config.Safename)
-	finalFilename := myFinalDirname + "/" + filename
-	fmt.Printf("Move from %s to %s\n", verifierFilename, finalFilename)
+	verifiedFilename = verifiedDirname + "/" + filename
+	fmt.Printf("Move from %s to %s\n", verifierFilename, verifiedFilename)
 	if _, err := os.Stat(verifierFilename); err != nil {
 		log.Fatal(err)
 	}
+
 	// XXX change log.Fatal to something else?
-	if _, err := os.Stat(myFinalDirname); err == nil {
+	if _, err := os.Stat(verifiedDirname); err == nil {
 		// Directory exists thus we have a sha256 collision presumably
 		// due to multiple safenames (i.e., URLs) for the same content.
 		// Delete existing to avoid wasting space.
-		locations, err := ioutil.ReadDir(myFinalDirname)
+		locations, err := ioutil.ReadDir(verifiedDirname)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -365,32 +276,35 @@ func handleCreate(statusFilename string, configArg interface{}) {
 				config.Safename)
 		}
 
-		if err := os.RemoveAll(myFinalDirname); err != nil {
+		if err := os.RemoveAll(verifiedDirname); err != nil {
 			log.Fatal(err)
 		}
 	}
 
-	if err := os.MkdirAll(myFinalDirname, 0700); err != nil {
+	if err := os.MkdirAll(verifiedDirname, 0700); err != nil {
 		log.Fatal(err)
 	}
-	if err := os.Rename(verifierFilename, finalFilename); err != nil {
+
+	if err := os.Rename(verifierFilename, verifiedDirname); err != nil {
 		log.Fatal(err)
 	}
-	if err := os.Chmod(myFinalDirname, 0500); err != nil {
+
+	if err := os.Chmod(verifiedDirname, 0500); err != nil {
 		log.Fatal(err)
 	}
 
 	// Clean up empty directory
-	if err := os.Remove(myVerifierDirname); err != nil {
+	if err := os.Remove(verifierDirname); err != nil {
 		log.Fatal(err)
 	}
 	status.PendingAdd = false
 	status.State = types.DELIVERED
-	writeVerifyImageStatus(&status, statusFilename)
+	writeVerifyObjectStatus(&status, statusFilename)
 	log.Printf("handleCreate done for %s\n", config.DownloadURL)
 }
 
-func verifyObjectShaSignature(status *types.VerifyImageStatus, config *types.VerifyImageConfig, imageHash []byte,
+func verifyObjectShaSignature(status *types.VerifyImageStatus,
+			 config *types.VerifyImageConfig, imageHash []byte,
 	statusFilename string) string {
 
 	// XXX:FIXME if Image Signature is absent, skip
@@ -412,7 +326,7 @@ func verifyObjectShaSignature(status *types.VerifyImageStatus, config *types.Ver
 	//cert chain and signature verification...
 
 	serverCertName := types.UrlToFilename(config.SignatureKey)
-	serverCertificate, err := ioutil.ReadFile(certificateDirname + "/" + serverCertName)
+	serverCertificate, err := ioutil.ReadFile(certsDirname + "/" + serverCertName)
 	if err != nil {
 		cerr := fmt.Sprintf("unable to read the certificate %s", serverCertName)
 		return cerr
@@ -455,7 +369,7 @@ func verifyObjectShaSignature(status *types.VerifyImageStatus, config *types.Ver
 
 		certName := types.UrlToFilename(certUrl)
 
-		bytes, err := ioutil.ReadFile(certificateDirname + "/" + certName)
+		bytes, err := ioutil.ReadFile(certsDirname + "/" + certName)
 		if err != nil {
 			cerr := fmt.Sprintf("failed to read certificate Directory: %v", certName)
 			return cerr
@@ -531,6 +445,7 @@ func handleModify(statusFilename string, configArg interface{},
 	case *types.VerifyImageConfig:
 		config = configArg.(*types.VerifyImageConfig)
 	}
+
 	switch statusArg.(type) {
 	default:
 		log.Fatal("Can only handle VerifyImageStatus")
@@ -547,11 +462,11 @@ func handleModify(statusFilename string, configArg interface{},
 
 	if status.RefCount == 0 {
 		status.PendingModify = true
-		writeVerifyImageStatus(status, statusFilename)
+		writeVerifyObjectStatus(status, statusFilename)
 		doDelete(status)
 		status.PendingModify = false
 		status.State = 0 // XXX INITIAL implies failure
-		writeVerifyImageStatus(status, statusFilename)
+		writeVerifyObjectStatus(status, statusFilename)
 		log.Printf("handleModify done for %s\n", config.DownloadURL)
 		return
 	}
@@ -564,16 +479,20 @@ func handleModify(statusFilename string, configArg interface{},
 		return
 	}
 
+	// try deleting
 	status.PendingModify = true
-	writeVerifyImageStatus(status, statusFilename)
+	writeVerifyObjectStatus(status, statusFilename)
 	handleDelete(statusFilename, status)
+
+	// create again
 	handleCreate(statusFilename, config)
 	status.PendingModify = false
-	writeVerifyImageStatus(status, statusFilename)
+	writeVerifyObjectStatus(status, statusFilename)
 	log.Printf("handleModify done for %s\n", config.DownloadURL)
 }
 
 func handleDelete(statusFilename string, statusArg interface{}) {
+
 	var status *types.VerifyImageStatus
 
 	switch statusArg.(type) {
@@ -598,35 +517,278 @@ func handleDelete(statusFilename string, statusArg interface{}) {
 // to avoid deleting a different verified file with same sha as this claimed
 // to have
 func doDelete(status *types.VerifyImageStatus) {
+
 	log.Printf("doDelete(%v)\n", status.Safename)
 
-	myPendingDirname := pendingDirname + "/" + status.ImageSha256
-	myVerifierDirname := verifierDirname + "/" + status.ImageSha256
-	myFinalDirname := finalDirname + "/" + status.ImageSha256
+	curDnldDirname  := objDnldDirname  + "/" + status.ObjType
+	pendingDirname  := curDnldDirname + "/pending/"  + status.ImageSha256
+	verifierDirname := curDnldDirname + "/verifier/" + status.ImageSha256
+	verifiedDirname := curDnldDirname + "/verified/" + status.ImageSha256
 
-	if _, err := os.Stat(myPendingDirname); err == nil {
-		log.Printf("doDelete removing %s\n", myPendingDirname)
-		if err := os.RemoveAll(myPendingDirname); err != nil {
-			log.Fatal(err)
-		}
-	}
-	if _, err := os.Stat(myVerifierDirname); err == nil {
-		log.Printf("doDelete removing %s\n", myVerifierDirname)
-		if err := os.RemoveAll(myVerifierDirname); err != nil {
+	// cleanup work in progress files, if any
+	if _, err := os.Stat(pendingDirname); err == nil {
+		log.Printf("doDelete removing %s\n", pendingDirname)
+		if err := os.RemoveAll(pendingDirname); err != nil {
 			log.Fatal(err)
 		}
 	}
 
-	_, err := os.Stat(myFinalDirname)
+	if _, err := os.Stat(verifierDirname); err == nil {
+		log.Printf("doDelete removing %s\n", verifierDirname)
+		if err := os.RemoveAll(verifierDirname); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	_, err := os.Stat(verifiedDirname)
+
 	if err == nil && status.State == types.DELIVERED {
+
 		if _, err := os.Stat(preserveFilename); err == nil {
-			log.Printf("doDelete removing %s\n", myFinalDirname)
-			if err := os.RemoveAll(myFinalDirname); err != nil {
+			log.Printf("doDelete preserving %s\n", verifiedDirname)
+		} else {
+			log.Printf("doDelete removing %s\n", verifiedDirname)
+			if err := os.RemoveAll(verifiedDirname); err != nil {
 				log.Fatal(err)
 			}
-		} else {
-			log.Printf("doDelete preserving %s\n", myFinalDirname)
 		}
 	}
 	log.Printf("doDelete(%v) done\n", status.Safename)
 }
+
+func sanitizeDirs () {
+
+	dirs := []string{
+		baseDirname,
+		runDirname,
+
+		appImgBaseDirname,
+		appImgRunDirname,
+		appImgConfigDirname,
+		appImgStatusDirname,
+
+		baseOsBaseDirname,
+		baseOsRunDirname,
+		baseOsConfigDirname,
+		baseOsStatusDirname,
+
+		objDnldDirname,
+
+		appImgCatalogDirname,
+		appImgPendingDirname,
+		appImgVerifierDirname,
+		appImgVerifiedDirname,
+
+		baseOsCatalogDirname,
+		baseOsPendingDirname,
+		baseOsVerifierDirname,
+		baseOsVerifiedDirname,
+
+		certsDirname,
+	}
+
+	verifierDirs := []string {
+
+		appImgVerifierDirname,
+		baseOsVerifierDirname,
+	}
+
+	// Remove any files which didn't make it past the verifier
+	for _, dir := range verifierDirs {
+		if _, err := os.Stat(dir); err != nil {
+			if err := os.RemoveAll(dir); err != nil {
+				log.Fatal(err)
+			}
+		}
+	}
+
+	// now recreate the dirs, if absent
+	for _, dir := range dirs {
+		if _, err := os.Stat(dir); err != nil {
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				log.Fatal(err)
+			}
+		}
+	}
+}
+
+func handleWorkinProgresObjects () {
+
+	statusDirs:= []string{
+		appImgStatusDirname,
+		baseOsStatusDirname,
+	}
+
+	for _, dir := range statusDirs {
+
+		if _, err := os.Stat(dir); err == nil {
+
+			// Don't remove directory since there is a watch on it
+			locations, err := ioutil.ReadDir(dir)
+			if err != nil {
+				log.Fatal(err)
+			}
+			// Mark as PendingDelete and later purge such entries
+			for _, location := range locations {
+
+				if !strings.HasSuffix(location.Name(), ".json") {
+					continue
+				}
+				status := types.VerifyImageStatus{}
+				statusFile := dir + "/" + location.Name()
+				cb, err := ioutil.ReadFile(statusFile)
+				if err != nil {
+					log.Printf("%s for %s\n", err, statusFile)
+					continue
+				}
+				if err := json.Unmarshal(cb, &status); err != nil {
+					log.Printf("%s file: %s\n",
+						err, statusFile)
+					continue
+				}
+				status.PendingDelete = true
+				writeVerifyObjectStatus(&status, statusFile)
+			}
+		}
+	}
+}
+
+func handleMarkedDeletePendingObjects () {
+
+	statusDirs:= []string {
+		appImgStatusDirname,
+		baseOsStatusDirname,
+	}
+
+	for _, dir := range statusDirs {
+
+		if _, err := os.Stat(dir); err == nil {
+
+			// Don't remove directory since there is a watch on it
+			locations, err := ioutil.ReadDir(dir)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			// Delete any still marked as PendingDelete
+			for _, location := range locations {
+
+				if !strings.HasSuffix(location.Name(), ".json") {
+					continue
+				}
+				status := types.VerifyImageStatus{}
+				statusFile := dir + "/" + location.Name()
+				cb, err := ioutil.ReadFile(statusFile)
+				if err != nil {
+					log.Printf("%s for %s\n", err, statusFile)
+					continue
+				}
+				if err := json.Unmarshal(cb, &status); err != nil {
+					log.Printf("%s file: %s\n",
+						err, statusFile)
+					continue
+				}
+				if status.PendingDelete {
+					log.Printf("still PendingDelete; delete %s\n",
+						statusFile)
+					if err := os.RemoveAll(statusFile); err != nil {
+						log.Fatal(err)
+					}
+				}
+			}
+		}
+	}
+}
+
+// revalidate/recreate status files for verified objects
+func handleVerifiedObjects() {
+
+	var objTypes = []string {
+		appImgObj,
+		baseOsObj,
+	}
+
+	for _, objType := range objTypes {
+
+		verifiedDirname := objDnldDirname + "/" + objType + "/verified"
+		statusDirname   := runDirname + "/" + objType + "/status"
+
+		if _, err := os.Stat(verifiedDirname); err == nil {
+			handleVerifiedObjectsExtended (objType, verifiedDirname,
+				 statusDirname, "")
+		}
+	}
+}
+
+func handleVerifiedObjectsExtended (objType string, objDirname string,
+			 statusDirname string, parentDirname string) {
+
+	fmt.Printf("handleInit(%s, %s, %s)\n", objDirname,
+			statusDirname, parentDirname)
+
+	locations, err := ioutil.ReadDir(objDirname)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for _, location := range locations {
+
+		filename := objDirname + "/" + location.Name()
+
+		if location.IsDir() {
+
+			fmt.Printf("handleInit: Looking in %s\n", filename)
+			if _, err := os.Stat(filename); err == nil {
+				handleVerifiedObjectsExtended(objType, filename,
+							 statusDirname, location.Name())
+			}
+
+		} else {
+
+			fmt.Printf("handleInit: processing %s\n", filename)
+			safename := location.Name()
+
+			// XXX should really re-verify the image on reboot/restart
+			// We don't know the URL; Pick a name which is unique
+			sha := parentDirname
+			if sha != "" {
+				safename += "." + sha
+			}
+
+			status := types.VerifyImageStatus{
+				Safename:    safename,
+				ImageSha256: sha,
+				ObjType:     objType,
+				State:       types.DELIVERED,
+			}
+
+			writeVerifyObjectStatus(&status,
+				statusDirname + "/" + safename +".json")
+		}
+	}
+}
+
+func updateVerifyErrStatus(status *types.VerifyImageStatus,
+	lastErr string, statusFilename string) {
+	status.LastErr = lastErr
+	status.LastErrTime = time.Now()
+	status.PendingAdd = false
+	status.State = types.INITIAL
+	writeVerifyObjectStatus(status, statusFilename)
+}
+
+func writeVerifyObjectStatus(status *types.VerifyImageStatus,
+	statusFilename string) {
+	b, err := json.Marshal(status)
+	if err != nil {
+		log.Fatal(err, "json Marshal VerifyImageStatus")
+	}
+	// We assume a /var/run path hence we don't need to worry about
+	// partial writes/empty files due to a kernel crash.
+	err = ioutil.WriteFile(statusFilename, b, 0644)
+	if err != nil {
+		log.Fatal(err, statusFilename)
+	}
+}
+

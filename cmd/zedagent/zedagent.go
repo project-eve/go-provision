@@ -1,14 +1,13 @@
 // Copyright (c) 2017 Zededa, Inc.
 // All rights reserved.
 
+// zedCloud interfacing for config, baseos/app-instance image
 // Pull AppInstanceConfig from ZedCloud, make it available for zedmanager
 // publish AppInstanceStatus to ZedCloud.
 
 package main
 
 import (
-	"flag"
-	"fmt"
 	"github.com/zededa/go-provision/types"
 	"github.com/zededa/go-provision/watch"
 	"log"
@@ -17,34 +16,69 @@ import (
 
 // Keeping status in /var/run to be clean after a crash/reboot
 const (
-	zedagentConfigDirname   = "/var/tmp/zedagent/config"
-	zedmanagerConfigDirname = "/var/tmp/zedmanager/config"
-	zedmanagerStatusDirname = "/var/run/zedmanager/status"
-	downloaderConfigDirname = "/var/tmp/downloader/config"
-	downloaderStatusDirname = "/var/run/downloader/status"
-)
+	appImgObj    = "appImg.obj"
+	baseOsObj    = "baseOs.obj"
+	certObj      = "cert.obj"
+	devConfigObj = "devConfig.obj"
 
-// Set from Makefile
-var Version = "No version specified"
+	baseDirname    = "/var/tmp/zedagent"
+	runDirname     = "/var/run/zedagent"
+	objDnldDirname = baseDirname + "/downloads"
+
+	zedagentConfigDirname         = baseDirname + "/config"
+	zedagentStatusDirname         = runDirname  + "/status"
+
+	zedmanagerConfigDirname       = "/var/tmp/zedmanager/config"
+	zedmanagerStatusDirname       = "/var/run/zedmanager/status"
+
+	downloaderConfigBaseDirname   = "/var/tmp/downloader"
+	downloaderStatusBaseDirname   = "/var/run/downloader"
+
+	verifierConfigBaseDirname   = "/var/tmp/verifier"
+	verifierStatusBaseDirname   = "/var/run/verifier"
+
+	zedagentBaseOsConfigDirname   = baseDirname + "/" + devConfigObj + "config"
+	zedagentBaseOsStatusDirname   = runDirname  + "/" + devConfigObj + "status"
+
+	downloaderBaseOsConfigDirname = downloaderConfigBaseDirname +
+									 baseOsObj + "/config"
+	downloaderBaseOsStatusDirname = downloaderStatusBaseDirname +
+									 baseOsObj + "/status"
+
+	verifierBaseOsConfigDirname   = verifierConfigBaseDirname +
+									 baseOsObj + "/config"
+	verifierBaseOsStatusDirname   = verifierStatusBaseDirname +
+									 baseOsObj + "/status"
+)
 
 func main() {
 	log.SetOutput(os.Stdout)
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.LUTC)
-	versionPtr := flag.Bool("v", false, "Version")
-	flag.Parse()
-	if *versionPtr {
-		fmt.Printf("%s: %s\n", os.Args[0], Version)
-		return
-	}
 	log.Printf("Starting zedagent\n")
 	watch.CleanupRestarted("zedagent")
 
 	dirs := []string{
+
+		baseDirname,
+		runDirname,
+		objDnldDirname,
+
 		zedagentConfigDirname,
+		zedagentStatusDirname,
+
+		zedagentBaseOsConfigDirname,
+		zedagentBaseOsStatusDirname,
+
 		zedmanagerConfigDirname,
 		zedmanagerStatusDirname,
-		downloaderConfigDirname,
+
+		downloaderBaseOsConfigDirname,
+		downloaderBaseOsStatusDirname,
+
+		verifierBaseOsConfigDirname,
+		verifierBaseOsStatusDirname,
 	}
+
 	for _, dir := range dirs {
 		if _, err := os.Stat(dir); err != nil {
 			if err := os.MkdirAll(dir, 0700); err != nil {
@@ -58,30 +92,141 @@ func main() {
 
 	getCloudUrls()
 	go metricsTimerTask()
-	// XXX pass configUrl as argument
 	go configTimerTask()
 
-	configChanges := make(chan string)
+	baseOsConfigStatusChanges  := make(chan string)
+	appInstanceStatusChanges   := make(chan string)
+	baseOsDownloaderChanges    := make(chan string)
+	baseOsVerifierChanges      := make(chan string)
+
+	// base os config/status event handler
+	go watch.WatchConfigStatus(zedagentBaseOsConfigDirname,
+		zedagentBaseOsStatusDirname, baseOsConfigStatusChanges)
+
+	// app instance status event watcher
 	go watch.WatchConfigStatus(zedmanagerConfigDirname,
-		zedmanagerStatusDirname, configChanges)
+		zedmanagerStatusDirname, appInstanceStatusChanges)
+
+	// baseOs download watcher
+	go watch.WatchStatus(downloaderBaseOsStatusDirname,
+			 baseOsDownloaderChanges)
+
+	// baseOs verification watcher
+	go watch.WatchStatus(verifierBaseOsStatusDirname,
+			 baseOsVerifierChanges)
+
 	for {
 		select {
-		case change := <-configChanges:
+
+		case change := <-baseOsConfigStatusChanges:
 			{
-				watch.HandleConfigStatusEvent(change,
+				go watch.HandleConfigStatusEvent(change,
+					zedagentBaseOsConfigDirname,
+					zedagentBaseOsStatusDirname,
+					&types.BaseOsConfig{},
+					&types.BaseOsStatus{},
+					handleBaseOsCreate,
+					handleBaseOsModify,
+					handleBaseOsDelete, nil)
+				continue
+			}
+
+		case change := <-appInstanceStatusChanges:
+			{
+				go watch.HandleConfigStatusEvent(change,
 					zedmanagerConfigDirname,
 					zedmanagerStatusDirname,
 					&types.AppInstanceConfig{},
 					&types.AppInstanceStatus{},
-					handleStatusCreate, handleStatusModify,
-					handleStatusDelete, nil)
+					handleAppInstanceStatusCreate,
+					handleAppInstanceStatusModify,
+					handleAppInstanceStatusDelete, nil)
+				continue
+			}
+
+		case change := <-baseOsDownloaderChanges:
+			{
+				go watch.HandleStatusEvent(change,
+					downloaderBaseOsStatusDirname,
+					&types.DownloaderStatus{},
+					handleBaseOsConfigDownloadModify,
+					handleBaseOsConfigDownloadDelete, nil)
+				continue
+			}
+
+		case change := <-baseOsVerifierChanges:
+			{
+				go watch.HandleStatusEvent(change,
+					verifierBaseOsStatusDirname,
+					&types.VerifyImageStatus{},
+					handleBaseOsConfigVerifierModify,
+					handleBaseOsConfigVerifierDelete, nil)
 				continue
 			}
 		}
 	}
 }
 
-func handleStatusCreate(statusFilename string, configArg interface{}) {
+func handleBaseOsCreate(statusFilename string,
+		 configArg interface{}) {
+
+	var config *types.BaseOsConfig
+
+	switch configArg.(type) {
+	default:
+		log.Fatal("Can only handle BaseOsConfig")
+	case *types.BaseOsStatus:
+		config = configArg.(*types.BaseOsConfig)
+	}
+
+	log.Printf("handleBaseOsCreate for %s\n", config.DisplayName)
+	//PublishDeviceInfoToZedCloud(status)
+}
+
+func handleBaseOsModify(statusFilename string,
+		 configArg interface{}, statusArg interface{}) {
+
+	var config *types.BaseOsConfig
+	var status *types.BaseOsStatus
+
+	switch configArg.(type) {
+	default:
+		log.Fatal("Can only handle BaseOsStatus")
+	case *types.BaseOsConfig:
+		config = configArg.(*types.BaseOsConfig)
+	}
+
+	switch statusArg.(type) {
+	default:
+		log.Fatal("Can only handle BaseOsStatus")
+	case *types.BaseOsStatus:
+		status = statusArg.(*types.BaseOsStatus)
+	}
+
+	log.Printf("handleBaseOsCreate for %s\n", config.DisplayName)
+	log.Printf("handleBaseOsCreate for %s\n", status.DisplayName)
+	//PublishDeviceInfoToZedCloud(status)
+}
+
+func handleBaseOsDelete(statusFilename string,
+		 statusArg interface{}) {
+
+	var status *types.BaseOsStatus
+
+	switch statusArg.(type) {
+	default:
+		log.Fatal("Can only handle BaseOsStatus")
+	case *types.BaseOsStatus:
+		status = statusArg.(*types.BaseOsStatus)
+	}
+
+	log.Printf("handleBaseOsDelete for %s\n", status.DisplayName)
+	//PublishDeviceInfoToZedCloud(status)
+}
+
+func handleAppInstanceStatusCreate(statusFilename string,
+		 configArg interface{}) {
+
 	var config *types.AppInstanceConfig
 
 	switch configArg.(type) {
@@ -93,8 +238,9 @@ func handleStatusCreate(statusFilename string, configArg interface{}) {
 	log.Printf("handleCreate for %s\n", config.DisplayName)
 }
 
-func handleStatusModify(statusFilename string, configArg interface{},
-	statusArg interface{}) {
+func handleAppInstanceStatusModify(statusFilename string,
+		 configArg interface{}, statusArg interface{}) {
+
 	var status *types.AppInstanceStatus
 
 	switch statusArg.(type) {
@@ -103,12 +249,14 @@ func handleStatusModify(statusFilename string, configArg interface{},
 	case *types.AppInstanceStatus:
 		status = statusArg.(*types.AppInstanceStatus)
 	}
-	PublishDeviceInfoToZedCloud()
-	PublishHypervisorInfoToZedCloud()
+
+	//PublishDeviceInfoToZedCloud()
 	PublishAppInfoToZedCloud(status)
 }
 
-func handleStatusDelete(statusFilename string, statusArg interface{}) {
+func handleAppInstanceStatusDelete(statusFilename string,
+		 statusArg interface{}) {
+
 	var status *types.AppInstanceStatus
 
 	switch statusArg.(type) {
@@ -117,7 +265,54 @@ func handleStatusDelete(statusFilename string, statusArg interface{}) {
 	case *types.AppInstanceStatus:
 		status = statusArg.(*types.AppInstanceStatus)
 	}
-	PublishDeviceInfoToZedCloud()
-	PublishHypervisorInfoToZedCloud()
+
 	PublishAppInfoToZedCloud(status)
+//	PublishDeviceInfoToZedCloud()
+}
+
+func handleBaseOsConfigDownloadModify(statusFilename string,
+	statusArg interface{}) {
+
+	var status *types.DownloaderStatus
+
+	switch statusArg.(type) {
+	default:
+		log.Fatal("Can only handle DownloaderStatus")
+	case *types.DownloaderStatus:
+		status = statusArg.(*types.DownloaderStatus)
+	}
+
+	log.Printf("handleBaseOsDownloadModify for %s\n",
+		status.Safename)
+	updateDownloaderStatus(baseOsObj, status)
+}
+
+func handleBaseOsConfigDownloadDelete(statusFilename string) {
+
+	log.Printf("handleBaseOsDownloadDelete for %s\n",
+		statusFilename)
+	removeDownloaderStatus(baseOsObj, statusFilename)
+}
+
+func handleBaseOsConfigVerifierModify(statusFilename string,
+	statusArg interface{}) {
+	var status *types.VerifyImageStatus
+
+	switch statusArg.(type) {
+	default:
+		log.Fatal("Can only handle VerifyImageStatus")
+	case *types.VerifyImageStatus:
+		status = statusArg.(*types.VerifyImageStatus)
+	}
+
+	log.Printf("handleBaseOsVeriferModify for %s\n",
+		status.Safename)
+	updateVerifierStatus(baseOsObj, status)
+}
+
+func handleBaseOsConfigVerifierDelete(statusFilename string) {
+
+	log.Printf("handleBaseOsVeriferDelete for %s\n",
+		statusFilename)
+	removeVerifierStatus(baseOsObj, statusFilename)
 }

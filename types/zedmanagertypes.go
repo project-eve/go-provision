@@ -4,16 +4,9 @@
 package types
 
 import (
-	"github.com/satori/go.uuid"
 	"log"
 	"time"
 )
-
-type UrlCloudCfg struct {
-	ConfigUrl  string
-	MetricsUrl string
-	StatusUrl  string
-}
 
 // top level config container
 type DeviceConfigResponse struct {
@@ -26,12 +19,6 @@ type EdgeDevConfig struct {
 	DevConfigSignature string
 	Apps               []AppInstanceConfig
 	Networks           []UnderlayNetworkConfig
-}
-
-// UUID plus version
-type UUIDandVersion struct {
-	UUID    uuid.UUID
-	Version string
 }
 
 // This is what we assume will come from the ZedControl for each
@@ -127,6 +114,10 @@ type StorageConfig struct {
 	ReadOnly    bool
 	Preserve    bool // If set a rw disk will be preserved across
 	// boots (acivate/inactivate)
+	ObjType          string
+	DownloadObjDir   string
+	FinalObjDir      string
+	NeedVerification bool
 	Format  string // Default "raw"; could be raw, qcow, qcow2, vhd
 	Devtype string // Default ""; could be e.g. "cdrom"
 	Target  string // Default "" is interpreted as "disk"

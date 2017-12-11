@@ -25,6 +25,7 @@ type VerifyImageConfig struct {
 	Safename         string   // Also refers to the dirname in pending dir
 	DownloadURL      string   // For logging output
 	ImageSha256      string   // sha256 of immutable image
+	ObjType          string
 	RefCount         uint     // Zero means can delete file
 	CertificateChain []string //name of intermediate certificates
 	ImageSignature   []byte   //signature of image
@@ -49,6 +50,7 @@ type VerifyImageStatus struct {
 	PendingModify bool
 	PendingDelete bool
 	ImageSha256   string  // sha256 of immutable image
+	ObjType       string
 	State         SwState // DELIVERED, or INITIAL if failed
 	LastErr       string  // Verification error
 	LastErrTime   time.Time

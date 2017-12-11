@@ -18,11 +18,7 @@ import (
 var domainConfig map[string]types.DomainConfig
 
 const (
-	certBaseDirname = "/var/tmp/downloader/cert.obj"
-	certRunDirname = "/var/run/downloader/cert.obj"
-	certConfigDirname = certBaseDirname + "/config"
-	certStatusDirname = certRunDirname + "/status"
-	imgCatalogDirname = "/var/tmp/zedmanager/downloads"
+	imgCatalogDirname = "/var/tmp/zedmanager/downloads/appImg.obj"
 	pendingDirname = imgCatalogDirname + "/pending"
 	verifierDirname = imgCatalogDirname + "/verifier"
 	finalDirname = imgCatalogDirname + "/verified"

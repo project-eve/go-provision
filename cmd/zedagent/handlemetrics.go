@@ -23,8 +23,8 @@ import (
 )
 
 const (
-	baseDirname   = "/var/tmp/zedrouter"
-	configDirname = baseDirname + "/config"
+	zedrouterConfigBaseDirname   = "/var/tmp/zedrouter"
+	zedrouterConfigDirname = zedrouterConfigBaseDirname + "/config"
 )
 
 // XXX remove global variable
@@ -345,7 +345,7 @@ func PublishDeviceInfoToZedCloud() {
 	ReportDeviceSoftwareInfo.SwHash = *proto.String(" ")
 	ReportDeviceInfo.Software = ReportDeviceSoftwareInfo
 
-	globalUplinkFileName := configDirname + "/global"
+	globalUplinkFileName := zedrouterConfigDirname + "/global"
 	cb, err := ioutil.ReadFile(globalUplinkFileName)
 	if err != nil {
 		log.Printf("%s for %s\n", err, globalUplinkFileName)
