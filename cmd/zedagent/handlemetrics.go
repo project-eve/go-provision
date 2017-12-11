@@ -7,7 +7,6 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/shirou/gopsutil/cpu"
 	"github.com/shirou/gopsutil/disk"
-	"github.com/shirou/gopsutil/host"
 	"github.com/shirou/gopsutil/mem"
 	"github.com/shirou/gopsutil/net"
 	"github.com/zededa/api/zmet"
@@ -267,7 +266,7 @@ func PublishMetricsToZedCloud() {
 	SendMetricsProtobufStrThroughHttp(ReportMetrics)
 }
 
-func PublishDeviceInfoToZedCloud() {
+func PublishDeviceInfoToZedCloud(baseOsStatus []*types.BaseOsStatus) {
 
 	var ReportInfo = &zmet.ZInfoMsg{}
 
@@ -336,14 +335,16 @@ func PublishDeviceInfoToZedCloud() {
 	} else {
 		log.Println("fill manufacturer info for arm...") //XXX FIXME
 	}
-	ReportDeviceSoftwareInfo := new(zmet.ZInfoSW)
-	systemHost, err := host.Info()
-	if err != nil {
-		log.Println(err)
+
+	ReportDeviceInfo.SoftwaraList = make([]*zmet.ZInfoSW,len(baseOsStatus))
+	for index,value := range baseOsStatus {
+		ReportDeviceSoftwareInfo := new(zmet.ZInfoSW)
+		ReportDeviceSoftwareInfo.SwVersion = value.UUIDandVersion.Version
+		ReportDeviceSoftwareInfo.SwHash = *proto.String(" ")
+		ReportDeviceSoftwareInfo.State = zmet.ZSwState(value.State)
+		ReportDeviceSoftwareInfo.Activated = value.Activated
+		ReportDeviceInfo.SoftwaraList[index] = ReportDeviceSoftwareInfo
 	}
-	ReportDeviceSoftwareInfo.SwVersion = systemHost.KernelVersion //XXX for now we are filling kernel version...
-	ReportDeviceSoftwareInfo.SwHash = *proto.String(" ")
-	ReportDeviceInfo.Software = ReportDeviceSoftwareInfo
 
 	globalUplinkFileName := zedrouterConfigDirname + "/global"
 	cb, err := ioutil.ReadFile(globalUplinkFileName)
