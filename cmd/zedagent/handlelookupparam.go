@@ -54,36 +54,40 @@ func handleLookUpParam(devConfig *zconfig.EdgeDevConfig) {
 	var device = types.DeviceDb{}
 
 	lispInfo := devConfig.LispInfo
-	device.LispInstance = lispInfo.LispInstance
-	device.EID = net.ParseIP(lispInfo.EID)
-	device.EIDHashLen = uint8(lispInfo.EIDHashLen)
-	device.EidAllocationPrefix = lispInfo.EidAllocationPrefix
-	device.EidAllocationPrefixLen = int(lispInfo.EidAllocationPrefixLen)
-	device.ClientAddr = lispInfo.ClientAddr
-	device.LispMapServers = make([]types.LispServerInfo, len(lispInfo.LispMapServers))
-	var lmsx int = 0
-	for _, lms := range lispInfo.LispMapServers {
+	if lispInfo != nil {
 
-		lispServerDetail := new(types.LispServerInfo)
-		lispServerDetail.NameOrIp = lms.NameOrIp
-		lispServerDetail.Credential = lms.Credential
-		device.LispMapServers[lmsx] = *lispServerDetail
-		lmsx++
-	}
-	device.ZedServers.NameToEidList = make([]types.NameToEid, len(lispInfo.ZedServers))
-	var zsx int = 0
-	for _, zs := range lispInfo.ZedServers {
+		device.LispInstance = lispInfo.LispInstance
+		device.EID = net.ParseIP(lispInfo.EID)
+		device.EIDHashLen = uint8(lispInfo.EIDHashLen)
+		device.EidAllocationPrefix = lispInfo.EidAllocationPrefix
+		device.EidAllocationPrefixLen = int(lispInfo.EidAllocationPrefixLen)
+		device.ClientAddr = lispInfo.ClientAddr
+		device.LispMapServers = make([]types.LispServerInfo, len(lispInfo.LispMapServers))
 
-		nameToEidInfo := new(types.NameToEid)
-		nameToEidInfo.HostName = zs.HostName
-		nameToEidInfo.EIDs = make([]net.IP, len(zs.EID))
-		var eidx int = 0
-		for _, eid := range zs.EID {
-			nameToEidInfo.EIDs[eidx] = net.ParseIP(eid)
-			eidx++
+		var lmsx int = 0
+		for _, lms := range lispInfo.LispMapServers {
+
+			lispServerDetail := new(types.LispServerInfo)
+			lispServerDetail.NameOrIp = lms.NameOrIp
+			lispServerDetail.Credential = lms.Credential
+			device.LispMapServers[lmsx] = *lispServerDetail
+			lmsx++
 		}
-		device.ZedServers.NameToEidList[zsx] = *nameToEidInfo
-		zsx++
+
+		device.ZedServers.NameToEidList = make([]types.NameToEid, len(lispInfo.ZedServers))
+		var zsx int = 0
+		for _, zs := range lispInfo.ZedServers {
+			nameToEidInfo := new(types.NameToEid)
+			nameToEidInfo.HostName = zs.HostName
+			nameToEidInfo.EIDs = make([]net.IP, len(zs.EID))
+			var eidx int = 0
+			for _, eid := range zs.EID {
+				nameToEidInfo.EIDs[eidx] = net.ParseIP(eid)
+				eidx++
+			}
+			device.ZedServers.NameToEidList[zsx] = *nameToEidInfo
+			zsx++
+		}
 	}
 
 	var deviceCert tls.Certificate
