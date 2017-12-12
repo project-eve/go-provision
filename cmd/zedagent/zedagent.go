@@ -182,13 +182,13 @@ func handleBaseOsCreate(statusFilename string,
     switch configArg.(type) {
     default:
         log.Fatal("Can only handle BaseOsConfig")
-    case *types.BaseOsStatus:
+    case *types.BaseOsConfig:
         config = configArg.(*types.BaseOsConfig)
     }
 
-    log.Printf("handleBaseOsCreate for %s\n", config.DisplayName)
+    log.Printf("handleBaseOsCreate for %s\n", config.BaseOsVersion)
 	addOrUpdateBaseOsConfig(config.UUIDandVersion.UUID.String(), *config)
-    //PublishDeviceInfoToZedCloud(status)
+	PublishDeviceInfoToZedCloud(baseOsStatusMap)
 }
 
 func handleBaseOsModify(statusFilename string,
@@ -199,10 +199,10 @@ func handleBaseOsModify(statusFilename string,
 
     switch configArg.(type) {
     default:
-        log.Fatal("Can only handle BaseOsStatus")
+        log.Fatal("Can only handle BaseOsConfig")
     case *types.BaseOsConfig:
         config = configArg.(*types.BaseOsConfig)
-        log.Printf("handleBaseOsModify for %s\n", config.DisplayName)
+        log.Printf("handleBaseOsModify for %s\n", config.BaseOsVersion)
     }
 
     switch statusArg.(type) {
@@ -210,7 +210,7 @@ func handleBaseOsModify(statusFilename string,
         log.Fatal("Can only handle BaseOsStatus")
     case *types.BaseOsStatus:
         status = statusArg.(*types.BaseOsStatus)
-        log.Printf("handleBaseOsModify for %s\n", status.DisplayName)
+        log.Printf("handleBaseOsModify for %s\n", status.BaseOsVersion)
     }
 
     if config.UUIDandVersion.Version == status.UUIDandVersion.Version {
@@ -224,7 +224,7 @@ func handleBaseOsModify(statusFilename string,
 	writeBaseOsStatus(status, statusFilename)
 
 	addOrUpdateBaseOsConfig(config.UUIDandVersion.UUID.String(), *config)
-    //PublishDeviceInfoToZedCloud(status)
+	PublishDeviceInfoToZedCloud(baseOsStatusMap)
 }
 
 func handleBaseOsDelete(statusFilename string,
@@ -242,7 +242,7 @@ func handleBaseOsDelete(statusFilename string,
     log.Printf("handleBaseOsDelete for %s\n", status.DisplayName)
 
 	removeBaseOsConfig(status.UUIDandVersion.UUID.String())
-    //PublishDeviceInfoToZedCloud(status)
+	PublishDeviceInfoToZedCloud(baseOsStatusMap)
 }
 
 func handleAppInstanceStatusCreate(statusFilename string,

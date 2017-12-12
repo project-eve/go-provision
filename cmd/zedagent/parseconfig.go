@@ -24,38 +24,45 @@ func parseBaseOsConfig (config *zconfig.EdgeDevConfig) {
 	log.Println("Applying Base Os config")
 
 	cfgOsList  := config.GetBase()
-	baseOsList := make ([]types.BaseOsConfig, len(cfgOsList))
-
 
 	if len(cfgOsList) != 0 {
+
 		baseOsList := make ([]types.BaseOsConfig, len(cfgOsList))
+
 		for idx, cfgOs := range cfgOsList {
-			log.Printf("New/updated Os %v\n", cfgOs)
 
-			baseOsList[idx].UUIDandVersion.UUID, _ = uuid.FromString(cfgOs.Uuidandversion.Uuid)
-			baseOsList[idx].UUIDandVersion.Version = cfgOs.Uuidandversion.Version
+			baseOs := new(types.BaseOsConfig)
 
-			baseOsList[idx].Activate      = cfgOs.GetActivate()
-			baseOsList[idx].BaseOsVersion = cfgOs.GetBaseOSVersion()
+			baseOs.UUIDandVersion.UUID, _ = uuid.FromString(cfgOs.Uuidandversion.Uuid)
+			baseOs.UUIDandVersion.Version = cfgOs.Uuidandversion.Version
+
+			baseOs.Activate      = cfgOs.GetActivate()
+			baseOs.BaseOsVersion = cfgOs.GetBaseOSVersion()
 
 			cfgOsDetails    := cfgOs.GetBaseOSDetails()
 			cfgOsParamList  := cfgOsDetails.GetBaseOSParams()
 
-			params := make ([]types.OsVerParams, len(cfgOsParamList))
-
 			for jdx, cfgOsDetail := range cfgOsParamList {
-				params[jdx].OSVerKey   = cfgOsDetail.GetOSVerKey()
-				params[jdx].OSVerValue = cfgOsDetail.GetOSVerValue()
+				param := new(types.OsVerParams)
+				param.OSVerKey   = cfgOsDetail.GetOSVerKey()
+				param.OSVerValue = cfgOsDetail.GetOSVerValue()
+				baseOs.OsParams[jdx] = *param
 			}
 
-			baseOsList[idx].OsParams = params
-			baseOsList[idx].StorageConfigList = make([]types.StorageConfig, len(cfgOs.Drives))
-			parseStorageConfigList(config, baseOsList[idx].StorageConfigList, cfgOs.Drives)
-		}
-	}
+			baseOs.StorageConfigList = make([]types.StorageConfig, len(cfgOs.Drives))
+			parseStorageConfigList(config, baseOs.StorageConfigList, cfgOs.Drives)
+			baseOsList[idx] = *baseOs
 
-	if validateBaseOsConfig(baseOsList) == true {
-		createBaseOsConfig(baseOsList)
+			bytes, err := json.Marshal(baseOs)
+
+			if err == nil {
+				log.Printf("New/updated BaseOs %d: %s\n", idx, bytes)
+			}
+		}
+
+		if validateBaseOsConfig(baseOsList) == true {
+			createBaseOsConfig(baseOsList)
+		}
 	}
 }
 
@@ -361,17 +368,17 @@ func writeAppInstanceConfig(appInstance types.AppInstanceConfig,
 	}
 }
 
-func writeBaseOsConfig(baseOsConfig types.BaseOsConfig,
-					 baseOsFilename string) {
+func writeBaseOsConfig(baseOsConfig types.BaseOsConfig, baseOsFilename string) {
 
-	log.Printf("Writing baseOs config UUID %s\n", baseOsFilename)
 	bytes, err := json.Marshal(baseOsConfig)
+
 	if err != nil {
 		log.Fatal(err, "json Marshal BaseOsConfig")
 	}
 
-	configFilename := zedagentBaseOsConfigDirname + "/" + baseOsFilename + ".json"
+	log.Printf("Writing baseOs config UUID %s, %s\n", baseOsFilename, bytes)
 
+	configFilename := zedagentBaseOsConfigDirname + "/" + baseOsFilename + ".json"
 
 	err = ioutil.WriteFile(configFilename, bytes, 0644)
 
@@ -481,12 +488,13 @@ func validateBaseOsConfig(baseOsList []types.BaseOsConfig) bool {
 
 func createBaseOsConfig(baseOsList []types.BaseOsConfig) {
 
-	for _, baseOsInstance := range baseOsList {
+	for idx, baseOsInstance := range baseOsList {
 
 		baseOsFilename := baseOsInstance.UUIDandVersion.UUID.String()
 		writeBaseOsConfig(baseOsInstance, baseOsFilename)
 	}
 }
+
 func validateAppInstanceConfig(appInstance types.AppInstanceConfig) bool {
 	return true
 }
