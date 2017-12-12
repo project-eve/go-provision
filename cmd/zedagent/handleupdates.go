@@ -85,26 +85,27 @@ func addOrUpdateBaseOsConfig(uuidStr string, config types.BaseOsConfig) {
 	}
 
 	if added {
-	        if _, ok := baseOsConfigMap[uuidStr]; !ok {
-            status := types.BaseOsStatus{
-                UUIDandVersion: config.UUIDandVersion,
-                DisplayName:    config.DisplayName,
-            }
 
-            status.StorageStatusList = make([]types.StorageStatus,
-                len(config.StorageConfigList))
-            for i, sc := range config.StorageConfigList {
-                ss := &status.StorageStatusList[i]
-                ss.DownloadURL = sc.DownloadURL
-                ss.ImageSha256 = sc.ImageSha256
-                ss.Target = sc.Target
-            }
+		status := types.BaseOsStatus{
+		    UUIDandVersion: config.UUIDandVersion,
+		    DisplayName:    config.DisplayName,
+		    BaseOsVersion:  config.BaseOsVersion,
+		}
 
-            baseOsStatusMap[uuidStr] = status
-            statusFilename := fmt.Sprintf("%s/%s.json",
-                zedagentBaseOsStatusDirname, uuidStr)
-            writeBaseOsStatus(&status, statusFilename)
-        }
+		status.StorageStatusList = make([]types.StorageStatus,
+		    len(config.StorageConfigList))
+
+		for i, sc := range config.StorageConfigList {
+		    ss := &status.StorageStatusList[i]
+		    ss.DownloadURL = sc.DownloadURL
+		    ss.ImageSha256 = sc.ImageSha256
+		    ss.Target = sc.Target
+		}
+
+		baseOsStatusMap[uuidStr] = status
+		statusFilename := fmt.Sprintf("%s/%s.json",
+		    zedagentBaseOsStatusDirname, uuidStr)
+		writeBaseOsStatus(&status, statusFilename)
 	}
 
 	if changed {
