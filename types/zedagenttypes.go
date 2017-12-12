@@ -22,6 +22,11 @@ type UrlCloudCfg struct {
 	LogUrl     string
 }
 
+type OsVerParams struct {
+	OSVerKey   string
+	OSVerValue string
+}
+
 // This is what we assume will come from the ZedControl for base OS.
 // Note that we can have different versions  configured for the
 // same UUID, hence the key is the UUIDandVersion  We assume the
@@ -31,8 +36,10 @@ type UrlCloudCfg struct {
 type BaseOsConfig struct {
 	UUIDandVersion      UUIDandVersion
 	DisplayName         string
+	BaseOsVersion       string
 	ConfigSha256        string
 	ConfigSignature     string
+    OsParams            []OsVerParams
 	StorageConfigList   []StorageConfig
 	Activate            bool
 }

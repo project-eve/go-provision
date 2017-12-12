@@ -185,7 +185,7 @@ func LookupVerifyImageStatusAny(safename string,
 	m0, err := LookupVerifyImageStatus(safename)
 	if err == nil {
 		return m0, nil
-	}	
+	}
 	m1, err := lookupVerifyImageStatusSha256Impl(sha256)
 	if err == nil {
 		log.Printf("LookupVerifyImageStatusAny: found based on sha %s\n",

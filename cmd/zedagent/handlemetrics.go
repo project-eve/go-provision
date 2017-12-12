@@ -336,14 +336,14 @@ func PublishDeviceInfoToZedCloud(baseOsStatus []*types.BaseOsStatus) {
 		log.Println("fill manufacturer info for arm...") //XXX FIXME
 	}
 
-	ReportDeviceInfo.SoftwaraList = make([]*zmet.ZInfoSW,len(baseOsStatus))
+	ReportDeviceInfo.SoftwareList = make([]*zmet.ZInfoSW,len(baseOsStatus))
 	for index,value := range baseOsStatus {
 		ReportDeviceSoftwareInfo := new(zmet.ZInfoSW)
 		ReportDeviceSoftwareInfo.SwVersion = value.UUIDandVersion.Version
 		ReportDeviceSoftwareInfo.SwHash = *proto.String(" ")
 		ReportDeviceSoftwareInfo.State = zmet.ZSwState(value.State)
 		ReportDeviceSoftwareInfo.Activated = value.Activated
-		ReportDeviceInfo.SoftwaraList[index] = ReportDeviceSoftwareInfo
+		ReportDeviceInfo.SoftwareList[index] = ReportDeviceSoftwareInfo
 	}
 
 	globalUplinkFileName := zedrouterConfigDirname + "/global"

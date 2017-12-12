@@ -12,24 +12,58 @@ import (
 	"strings"
 )
 
-const (
-	certBaseDirname      = "/var/tmp/downloader/cert.obj"
-	certRunDirname       = "/var/run/downloader/cert.obj"
-	certConfigDirname    = certBaseDirname + "/config"
-	certStatusDirname    = certRunDirname + "/status"
-	imgCatalogDirname    = "/var/tmp/zedmanager/downloads"
-	pendingDirname       = imgCatalogDirname + "/pending"
-	verifierDirname      = imgCatalogDirname + "/verifier"
-	finalDirname         = imgCatalogDirname + "/verified"
-	certsDownloadDirname = imgCatalogDirname + "/certs" // XXX vs. cert.obj?
-	certificateDirname   = "/var/tmp/zedmanager/certs"
-)
-
 func parseConfig(config *zconfig.EdgeDevConfig) {
+
+	log.Println("Applying new config")
+	parseBaseOsConfig (config)
+	parseAppInstanceConfig (config)
+}
+
+func parseBaseOsConfig (config *zconfig.EdgeDevConfig) {
+
+	log.Println("Applying Base Os config")
+
+	cfgOsList  := config.GetBase()
+	baseOsList := make ([]types.BaseOsConfig, len(cfgOsList))
+
+
+	if len(cfgOsList) != 0 {
+		baseOsList := make ([]types.BaseOsConfig, len(cfgOsList))
+		for idx, cfgOs := range cfgOsList {
+			log.Printf("New/updated Os %v\n", cfgOs)
+
+			baseOsList[idx].UUIDandVersion.UUID, _ = uuid.FromString(cfgOs.Uuidandversion.Uuid)
+			baseOsList[idx].UUIDandVersion.Version = cfgOs.Uuidandversion.Version
+
+			baseOsList[idx].Activate      = cfgOs.GetActivate()
+			baseOsList[idx].BaseOsVersion = cfgOs.GetBaseOSVersion()
+
+			cfgOsDetails    := cfgOs.GetBaseOSDetails()
+			cfgOsParamList  := cfgOsDetails.GetBaseOSParams()
+
+			params := make ([]types.OsVerParams, len(cfgOsParamList))
+
+			for jdx, cfgOsDetail := range cfgOsParamList {
+				params[jdx].OSVerKey   = cfgOsDetail.GetOSVerKey()
+				params[jdx].OSVerValue = cfgOsDetail.GetOSVerValue()
+			}
+
+			baseOsList[idx].OsParams = params
+			baseOsList[idx].StorageConfigList = make([]types.StorageConfig, len(cfgOs.Drives))
+			parseStorageConfigList(config, baseOsList[idx].StorageConfigList, cfgOs.Drives)
+		}
+	}
+
+	if validateBaseOsConfig(baseOsList) == true {
+		createBaseOsConfig(baseOsList)
+	}
+}
+
+func parseAppInstanceConfig (config *zconfig.EdgeDevConfig) {
 
 	var appInstance = types.AppInstanceConfig{}
 
-	log.Println("Applying new config")
+	log.Println("Applying App Instance config")
 
 	Apps := config.GetApps()
 
@@ -52,58 +86,7 @@ func parseConfig(config *zconfig.EdgeDevConfig) {
 
 		appInstance.StorageConfigList = make([]types.StorageConfig, len(cfgApp.Drives))
 
-		var idx int = 0
-
-		for _, drive := range cfgApp.Drives {
-
-			found := false
-
-			image := new(types.StorageConfig)
-			for _, ds := range config.Datastores {
-
-				if drive.Image != nil &&
-					drive.Image.DsId == ds.Id {
-
-					found = true
-					image.DownloadURL = ds.Fqdn + "/" + ds.Dpath + "/" + drive.Image.Name
-					image.TransportMethod = ds.DType.String()
-					image.ApiKey = ds.ApiKey
-					image.Password = ds.Password
-					image.Dpath = ds.Dpath
-					break
-				}
-			}
-
-			if found == false {
-				continue
-			}
-
-			image.Format = strings.ToLower(drive.Image.Iformat.String())
-			image.MaxSize = uint(drive.Maxsize)
-			image.ReadOnly = drive.Readonly
-			image.Preserve = drive.Preserve
-			image.Target = strings.ToLower(drive.Target.String())
-			image.Devtype = strings.ToLower(drive.Drvtype.String())
-			image.ImageSignature = drive.Image.Siginfo.Signature
-			image.ImageSha256 = drive.Image.Sha256
-
-			// copy the certificates
-			if drive.Image.Siginfo.Signercerturl != "" {
-				image.SignatureKey = drive.Image.Siginfo.Signercerturl
-			}
-
-			// XXX:FIXME certificates can be many
-			// this list, currently contains the certUrls
-			// should be the sha/uuid of cert filenames
-			// as proper DataStore Entries
-
-			if drive.Image.Siginfo.Intercertsurl != "" {
-				image.CertificateChain = make([]string, 1)
-				image.CertificateChain[0] = drive.Image.Siginfo.Intercertsurl
-			}
-			appInstance.StorageConfigList[idx] = *image
-			idx++
-		}
+		parseStorageConfigList(config, appInstance.StorageConfigList, cfgApp.Drives)
 
 		// fill the overlay/underlay config
 		parseNetworkConfig(&appInstance, cfgApp, config.Networks)
@@ -111,9 +94,71 @@ func parseConfig(config *zconfig.EdgeDevConfig) {
 		// get the certs for image sha verification
 		getCerts(appInstance)
 
-		// write to zedmanager config directory
-		appFilename := cfgApp.Uuidandversion.Uuid
-		writeAppInstance(appInstance, appFilename)
+		if validateAppInstanceConfig(appInstance) == true {
+
+			// write to zedmanager config directory
+			appFilename := cfgApp.Uuidandversion.Uuid
+
+			writeAppInstanceConfig(appInstance, appFilename)
+		}
+	}
+}
+
+func parseStorageConfigList(config *zconfig.EdgeDevConfig, storageList []types.StorageConfig,
+					drives []*zconfig.Drive) {
+
+	var idx int = 0
+
+	for _, drive := range drives {
+
+		found := false
+
+		image := new(types.StorageConfig)
+		for _, ds := range config.Datastores {
+
+			if drive.Image != nil &&
+				drive.Image.DsId == ds.Id {
+
+				found = true
+				image.DownloadURL = ds.Fqdn + "/" + ds.Dpath + "/" + drive.Image.Name
+				image.TransportMethod = ds.DType.String()
+				image.ApiKey = ds.ApiKey
+				image.Password = ds.Password
+				image.Dpath = ds.Dpath
+				break
+			}
+		}
+
+		if found == false {
+			continue
+		}
+
+		image.Format = strings.ToLower(drive.Image.Iformat.String())
+		image.MaxSize = uint(drive.Maxsize)
+		image.ReadOnly = drive.Readonly
+		image.Preserve = drive.Preserve
+		image.Target = strings.ToLower(drive.Target.String())
+		image.Devtype = strings.ToLower(drive.Drvtype.String())
+		image.ImageSignature = drive.Image.Siginfo.Signature
+		image.ImageSha256 = drive.Image.Sha256
+
+		// copy the certificates
+		if drive.Image.Siginfo.Signercerturl != "" {
+			image.SignatureKey = drive.Image.Siginfo.Signercerturl
+		}
+
+		// XXX:FIXME certificates can be many
+		// this list, currently contains the certUrls
+		// should be the sha/uuid of cert filenames
+		// as proper DataStore Entries
+
+		if drive.Image.Siginfo.Intercertsurl != "" {
+			image.CertificateChain = make([]string, 1)
+			image.CertificateChain[0] = drive.Image.Siginfo.Intercertsurl
+		}
+
+		storageList[idx] = *image
+		idx++
 	}
 }
 
@@ -301,14 +346,52 @@ func parseOverlayNetworkConfig(appInstance *types.AppInstanceConfig,
 	}
 }
 
-func writeAppInstance(appInstance types.AppInstanceConfig, appFilename string) {
+func writeAppInstanceConfig(appInstance types.AppInstanceConfig,
+					 appFilename string) {
 
 	log.Printf("Writing app instance UUID %s\n", appFilename)
 	bytes, err := json.Marshal(appInstance)
 	if err != nil {
 		log.Fatal(err, "json Marshal AppInstanceConfig")
 	}
-	err = ioutil.WriteFile(zedmanagerConfigDirname+"/"+appFilename+".json", bytes, 0644)
+	configFilename := zedmanagerConfigDirname + "/" + appFilename + ".json"
+	err = ioutil.WriteFile(configFilename, bytes, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func writeBaseOsConfig(baseOsConfig types.BaseOsConfig,
+					 baseOsFilename string) {
+
+	log.Printf("Writing baseOs config UUID %s\n", baseOsFilename)
+	bytes, err := json.Marshal(baseOsConfig)
+	if err != nil {
+		log.Fatal(err, "json Marshal BaseOsConfig")
+	}
+
+	configFilename := zedagentBaseOsConfigDirname + "/" + baseOsFilename + ".json"
+
+
+	err = ioutil.WriteFile(configFilename, bytes, 0644)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func writeBaseOsStatus(baseOsStatus *types.BaseOsStatus,
+						 statusFilename string) {
+
+	log.Printf("Writing baseOs status UUID %s\n", statusFilename)
+
+	bytes, err := json.Marshal(baseOsStatus)
+	if err != nil {
+		log.Fatal(err, "json Marshal BaseOsStatus")
+	}
+
+
+	err = ioutil.WriteFile(statusFilename,  bytes, 0644)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -350,8 +433,8 @@ func writeCertConfig(image types.StorageConfig, certUrl string) {
 		ApiKey:          image.ApiKey,
 		Password:        image.Password,
 		ImageSha256:     "",
-		DownloadObjDir:  certsDownloadDirname,
-		FinalObjDir :    certificateDirname,
+		DownloadObjDir:  certsPendingDirname,
+		FinalObjDir :    certsDirname,
 		RefCount:        1,
 	}
 
@@ -365,4 +448,45 @@ func writeCertConfig(image types.StorageConfig, certUrl string) {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func validateBaseOsConfig(baseOsList []types.BaseOsConfig) bool {
+
+	var osCount, activateCount int
+	if len (baseOsList) > 2 {
+		return false
+	}
+
+	//count base os instance activate count
+	for _, baseOsInstance := range baseOsList {
+
+		osCount ++
+		if baseOsInstance.Activate == true {
+			activateCount ++
+		}
+	}
+
+	if osCount == 0 {
+		return true
+	}
+
+	if osCount == 2 {
+		if activateCount != 1 {
+			return false
+		}
+	}
+
+	return true
+}
+
+func createBaseOsConfig(baseOsList []types.BaseOsConfig) {
+
+	for _, baseOsInstance := range baseOsList {
+
+		baseOsFilename := baseOsInstance.UUIDandVersion.UUID.String()
+		writeBaseOsConfig(baseOsInstance, baseOsFilename)
+	}
+}
+func validateAppInstanceConfig(appInstance types.AppInstanceConfig) bool {
+	return true
 }

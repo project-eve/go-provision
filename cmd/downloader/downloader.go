@@ -47,6 +47,7 @@ const (
 	baseDirname    = "/var/tmp/downloader"
 	runDirname     = "/var/run/downloader"
 	objDnldDirname = "/var/tmp/zedmanager/downloads"
+	certsDirname   = "/var/tmp/zedmanager/certs"
 
 	appImgBaseDirname   = baseDirname + "/" + appImgObj
 	appImgRunDirname    = runDirname + "/" + appImgObj
@@ -63,6 +64,11 @@ const (
 	baseOsConfigDirname = baseOsBaseDirname + "/config"
 	baseOsStatusDirname = baseOsRunDirname + "/status"
 
+	certsCatalogDirname  = objDnldDirname + "/" + certObj
+	certsPendingDirname  = certsCatalogDirname + "/pending"
+	certsVerifierDirname = certsCatalogDirname + "/verifier"
+	certsVerifiedDirname = certsCatalogDirname + "/verified"
+
 	appImgCatalogDirname  = objDnldDirname + "/" + appImgObj
 	appImgPendingDirname  = appImgCatalogDirname + "/pending"
 	appImgVerifierDirname = appImgCatalogDirname + "/verifier"
@@ -73,7 +79,6 @@ const (
 	baseOsVerifierDirname = baseOsCatalogDirname + "/verifier"
 	baseOsVerifiedDirname = baseOsCatalogDirname + "/verified"
 
-	certsDirname = "/var/tmp/zedmanager/certs"
 )
 
 // XXX remove global variables
