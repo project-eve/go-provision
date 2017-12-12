@@ -488,7 +488,7 @@ func validateBaseOsConfig(baseOsList []types.BaseOsConfig) bool {
 
 func createBaseOsConfig(baseOsList []types.BaseOsConfig) {
 
-	for idx, baseOsInstance := range baseOsList {
+	for _, baseOsInstance := range baseOsList {
 
 		baseOsFilename := baseOsInstance.UUIDandVersion.UUID.String()
 		writeBaseOsConfig(baseOsInstance, baseOsFilename)

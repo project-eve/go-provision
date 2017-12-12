@@ -266,7 +266,7 @@ func PublishMetricsToZedCloud() {
 	SendMetricsProtobufStrThroughHttp(ReportMetrics)
 }
 
-func PublishDeviceInfoToZedCloud(baseOsStatus []*types.BaseOsStatus) {
+func PublishDeviceInfoToZedCloud(baseOsStatus map[string]types.BaseOsStatus) {
 
 	var ReportInfo = &zmet.ZInfoMsg{}
 
@@ -337,13 +337,15 @@ func PublishDeviceInfoToZedCloud(baseOsStatus []*types.BaseOsStatus) {
 	}
 
 	ReportDeviceInfo.SoftwareList = make([]*zmet.ZInfoSW,len(baseOsStatus))
-	for index,value := range baseOsStatus {
+	var idx int = 0
+	for _,value := range baseOsStatus {
 		ReportDeviceSoftwareInfo := new(zmet.ZInfoSW)
 		ReportDeviceSoftwareInfo.SwVersion = value.UUIDandVersion.Version
 		ReportDeviceSoftwareInfo.SwHash = *proto.String(" ")
 		ReportDeviceSoftwareInfo.State = zmet.ZSwState(value.State)
 		ReportDeviceSoftwareInfo.Activated = value.Activated
-		ReportDeviceInfo.SoftwareList[index] = ReportDeviceSoftwareInfo
+		ReportDeviceInfo.SoftwareList[idx] = ReportDeviceSoftwareInfo
+		idx++
 	}
 
 	globalUplinkFileName := zedrouterConfigDirname + "/global"
