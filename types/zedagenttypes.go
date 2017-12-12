@@ -58,6 +58,7 @@ func (config BaseOsConfig) VerifyFilename(fileName string) bool {
 type BaseOsStatus struct {
 	UUIDandVersion    UUIDandVersion
 	DisplayName       string
+	BaseOsVersion     string
 	Activated         bool
 	StorageStatusList []StorageStatus
 	// Mininum state across all steps and all StorageStatus.
