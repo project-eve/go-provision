@@ -49,8 +49,25 @@ func parseBaseOsConfig (config *zconfig.EdgeDevConfig) {
 				baseOs.OsParams[jdx] = *param
 			}
 
-			baseOs.StorageConfigList = make([]types.StorageConfig, len(cfgOs.Drives))
-			parseStorageConfigList(config, baseOs.StorageConfigList, cfgOs.Drives)
+			var imageCount int
+			for _, drive := range cfgOs.Drives {
+				if drive.Image != nil  {
+					imageId := drive.Image.DsId
+
+					for _, dsEntry := range config.Datastores {
+						if dsEntry.Id == imageId {
+							imageCount++
+							break
+						}
+					}
+				}
+			}
+
+			if imageCount != 0 {
+				baseOs.StorageConfigList = make([]types.StorageConfig, imageCount)
+				parseStorageConfigList(config, baseOs.StorageConfigList, cfgOs.Drives)
+			}
+
 			baseOsList[idx] = *baseOs
 
 			bytes, err := json.Marshal(baseOs)
@@ -91,9 +108,24 @@ func parseAppInstanceConfig (config *zconfig.EdgeDevConfig) {
 		appInstance.FixedResources.RootDev = cfgApp.Fixedresources.Rootdev
 		appInstance.FixedResources.VCpus = int(cfgApp.Fixedresources.Vcpus)
 
-		appInstance.StorageConfigList = make([]types.StorageConfig, len(cfgApp.Drives))
+		var imageCount int
+		for _, drive := range cfgApp.Drives {
+			if drive.Image != nil  {
+				imageId := drive.Image.DsId
 
-		parseStorageConfigList(config, appInstance.StorageConfigList, cfgApp.Drives)
+				for _, dsEntry := range config.Datastores {
+					if dsEntry.Id == imageId {
+						imageCount++
+						break
+					}
+				}
+			}
+		}
+
+		if imageCount != 0 {
+			appInstance.StorageConfigList = make([]types.StorageConfig, imageCount)
+			parseStorageConfigList(config, appInstance.StorageConfigList, cfgApp.Drives)
+		}
 
 		// fill the overlay/underlay config
 		parseNetworkConfig(&appInstance, cfgApp, config.Networks)
