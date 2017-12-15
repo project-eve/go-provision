@@ -11,9 +11,9 @@ import (
 	"github.com/shirou/gopsutil/net"
 	"github.com/zededa/api/zmet"
 	"github.com/zededa/go-provision/types"
-	"net/http"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	zedrouterConfigBaseDirname   = "/var/tmp/zedrouter"
-	zedrouterConfigDirname = zedrouterConfigBaseDirname + "/config"
+	zedrouterConfigBaseDirname = "/var/tmp/zedrouter"
+	zedrouterConfigDirname     = zedrouterConfigBaseDirname + "/config"
 )
 
 // XXX remove global variable
@@ -204,7 +204,7 @@ func PublishMetricsToZedCloud() {
 		SendMetricsProtobufStrThroughHttp(ReportMetrics)
 		return
 	}
-	
+
 	for arr := 1; arr < 2; arr++ {
 
 		cpuTime, _ := strconv.ParseUint(cpuStorageStat[arr][3], 10, 0)
@@ -336,9 +336,9 @@ func PublishDeviceInfoToZedCloud(baseOsStatus map[string]types.BaseOsStatus) {
 		log.Println("fill manufacturer info for arm...") //XXX FIXME
 	}
 
-	ReportDeviceInfo.SoftwareList = make([]*zmet.ZInfoSW,len(baseOsStatus))
+	ReportDeviceInfo.SoftwareList = make([]*zmet.ZInfoSW, len(baseOsStatus))
 	var idx int = 0
-	for _,value := range baseOsStatus {
+	for _, value := range baseOsStatus {
 		ReportDeviceSoftwareInfo := new(zmet.ZInfoSW)
 		ReportDeviceSoftwareInfo.SwVersion = value.BaseOsVersion
 		ReportDeviceSoftwareInfo.SwHash = value.ConfigSha256

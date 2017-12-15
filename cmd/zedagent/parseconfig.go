@@ -7,29 +7,29 @@ import (
 	"github.com/zededa/api/zconfig"
 	"github.com/zededa/go-provision/types"
 	"io/ioutil"
-	"reflect"
 	"log"
 	"net"
 	"os"
+	"reflect"
 	"strings"
 )
 
 func parseConfig(config *zconfig.EdgeDevConfig) {
 
 	log.Println("Applying new config")
-	parseBaseOsConfig (config)
-	parseAppInstanceConfig (config)
+	parseBaseOsConfig(config)
+	parseAppInstanceConfig(config)
 }
 
-func parseBaseOsConfig (config *zconfig.EdgeDevConfig) {
+func parseBaseOsConfig(config *zconfig.EdgeDevConfig) {
 
 	log.Println("Applying Base Os config")
 
-	cfgOsList  := config.GetBase()
+	cfgOsList := config.GetBase()
 
 	if len(cfgOsList) != 0 {
 
-		baseOsList := make ([]types.BaseOsConfig, len(cfgOsList))
+		baseOsList := make([]types.BaseOsConfig, len(cfgOsList))
 
 		for idx, cfgOs := range cfgOsList {
 
@@ -38,22 +38,22 @@ func parseBaseOsConfig (config *zconfig.EdgeDevConfig) {
 			baseOs.UUIDandVersion.UUID, _ = uuid.FromString(cfgOs.Uuidandversion.Uuid)
 			baseOs.UUIDandVersion.Version = cfgOs.Uuidandversion.Version
 
-			baseOs.Activate      = cfgOs.GetActivate()
+			baseOs.Activate = cfgOs.GetActivate()
 			baseOs.BaseOsVersion = cfgOs.GetBaseOSVersion()
 
-			cfgOsDetails    := cfgOs.GetBaseOSDetails()
-			cfgOsParamList  := cfgOsDetails.GetBaseOSParams()
+			cfgOsDetails := cfgOs.GetBaseOSDetails()
+			cfgOsParamList := cfgOsDetails.GetBaseOSParams()
 
 			for jdx, cfgOsDetail := range cfgOsParamList {
 				param := new(types.OsVerParams)
-				param.OSVerKey   = cfgOsDetail.GetOSVerKey()
+				param.OSVerKey = cfgOsDetail.GetOSVerKey()
 				param.OSVerValue = cfgOsDetail.GetOSVerValue()
 				baseOs.OsParams[jdx] = *param
 			}
 
 			var imageCount int
 			for _, drive := range cfgOs.Drives {
-				if drive.Image != nil  {
+				if drive.Image != nil {
 					imageId := drive.Image.DsId
 
 					for _, dsEntry := range config.Datastores {
@@ -68,12 +68,12 @@ func parseBaseOsConfig (config *zconfig.EdgeDevConfig) {
 			if imageCount != 0 {
 				baseOs.StorageConfigList = make([]types.StorageConfig, imageCount)
 				parseStorageConfigList(config, baseOsObj, baseOs.StorageConfigList,
-										cfgOs.Drives)
+					cfgOs.Drives)
 			}
 
 			baseOsList[idx] = *baseOs
 
-            getCerts(baseOs.StorageConfigList)
+			getCerts(baseOs.StorageConfigList)
 
 			// Dump the config content
 			bytes, err := json.Marshal(baseOs)
@@ -89,7 +89,7 @@ func parseBaseOsConfig (config *zconfig.EdgeDevConfig) {
 	}
 }
 
-func parseAppInstanceConfig (config *zconfig.EdgeDevConfig) {
+func parseAppInstanceConfig(config *zconfig.EdgeDevConfig) {
 
 	var appInstance = types.AppInstanceConfig{}
 
@@ -116,7 +116,7 @@ func parseAppInstanceConfig (config *zconfig.EdgeDevConfig) {
 
 		var imageCount int
 		for _, drive := range cfgApp.Drives {
-			if drive.Image != nil  {
+			if drive.Image != nil {
 				imageId := drive.Image.DsId
 
 				for _, dsEntry := range config.Datastores {
@@ -131,7 +131,7 @@ func parseAppInstanceConfig (config *zconfig.EdgeDevConfig) {
 		if imageCount != 0 {
 			appInstance.StorageConfigList = make([]types.StorageConfig, imageCount)
 			parseStorageConfigList(config, appImgObj, appInstance.StorageConfigList,
-									 cfgApp.Drives)
+				cfgApp.Drives)
 		}
 
 		// fill the overlay/underlay config
@@ -151,8 +151,8 @@ func parseAppInstanceConfig (config *zconfig.EdgeDevConfig) {
 }
 
 func parseStorageConfigList(config *zconfig.EdgeDevConfig, objType string,
-					 storageList []types.StorageConfig,
-					 drives []*zconfig.Drive) {
+	storageList []types.StorageConfig,
+	drives []*zconfig.Drive) {
 
 	var idx int = 0
 
@@ -396,7 +396,7 @@ func parseOverlayNetworkConfig(appInstance *types.AppInstanceConfig,
 }
 
 func writeAppInstanceConfig(appInstance types.AppInstanceConfig,
-					 appFilename string) {
+	appFilename string) {
 
 	log.Printf("Writing app instance UUID %s\n", appFilename)
 	bytes, err := json.Marshal(appInstance)
@@ -430,7 +430,7 @@ func writeBaseOsConfig(baseOsConfig types.BaseOsConfig, baseOsFilename string) {
 }
 
 func writeBaseOsStatus(baseOsStatus *types.BaseOsStatus,
-						 statusFilename string) {
+	statusFilename string) {
 
 	log.Printf("Writing baseOs status UUID %s\n", statusFilename)
 
@@ -439,8 +439,7 @@ func writeBaseOsStatus(baseOsStatus *types.BaseOsStatus,
 		log.Fatal(err, "json Marshal BaseOsStatus")
 	}
 
-
-	err = ioutil.WriteFile(statusFilename,  bytes, 0644)
+	err = ioutil.WriteFile(statusFilename, bytes, 0644)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -473,26 +472,26 @@ func writeCertConfig(image types.StorageConfig, certUrl string) {
 	// also the sha for the cert should be set
 	// for now shortcutting it to only downloader
 	var config = &types.DownloaderConfig{
-		Safename:        safename,
-		DownloadURL:     certUrl,
-		MaxSize:         image.MaxSize,
-		TransportMethod: image.TransportMethod,
-		Dpath:           "zededa-cert-repo",
-		ApiKey:          image.ApiKey,
-		Password:        image.Password,
-		ImageSha256:     "",
-		ObjType:		 certObj,
+		Safename:         safename,
+		DownloadURL:      certUrl,
+		MaxSize:          image.MaxSize,
+		TransportMethod:  image.TransportMethod,
+		Dpath:            "zededa-cert-repo",
+		ApiKey:           image.ApiKey,
+		Password:         image.Password,
+		ImageSha256:      "",
+		ObjType:          certObj,
 		NeedVerification: false,
-		DownloadObjDir:  certsPendingDirname,
-		FinalObjDir :    certsDirname,
-		RefCount:        1,
+		DownloadObjDir:   certsPendingDirname,
+		FinalObjDir:      certsDirname,
+		RefCount:         1,
 	}
 
 	validateAndWriteDownloaderConfig(*config, configFilename)
 }
 
 func validateAndWriteVerifierConfig(config types.VerifyImageConfig,
-									 configFilename string) {
+	configFilename string) {
 	changed := false
 
 	if _, err := os.Stat(configFilename); err != nil {
@@ -506,16 +505,16 @@ func validateAndWriteVerifierConfig(config types.VerifyImageConfig,
 		cb, err := ioutil.ReadFile(configFilename)
 		if err == nil {
 
-			if err:= json.Unmarshal(cb, &dConfig); err != nil {
-                changed = true
+			if err := json.Unmarshal(cb, &dConfig); err != nil {
+				changed = true
 			}
 
-            if !reflect.DeepEqual(dConfig, config) {
-                fmt.Printf("configChanged\n", configFilename)
-                changed = true
-            }
+			if !reflect.DeepEqual(dConfig, config) {
+				fmt.Printf("configChanged\n", configFilename)
+				changed = true
+			}
 		} else {
-           changed = true
+			changed = true
 		}
 	}
 
@@ -535,7 +534,7 @@ func validateAndWriteVerifierConfig(config types.VerifyImageConfig,
 }
 
 func validateAndWriteDownloaderConfig(config types.DownloaderConfig,
-									 configFilename string) {
+	configFilename string) {
 	changed := false
 
 	if _, err := os.Stat(configFilename); err != nil {
@@ -549,16 +548,16 @@ func validateAndWriteDownloaderConfig(config types.DownloaderConfig,
 		cb, err := ioutil.ReadFile(configFilename)
 		if err == nil {
 
-			if err:= json.Unmarshal(cb, &dConfig); err != nil {
-                changed = true
+			if err := json.Unmarshal(cb, &dConfig); err != nil {
+				changed = true
 			}
 
-            if !reflect.DeepEqual(dConfig, config) {
-                fmt.Printf("configChanged\n", configFilename)
-                changed = true
-            }
+			if !reflect.DeepEqual(dConfig, config) {
+				fmt.Printf("configChanged\n", configFilename)
+				changed = true
+			}
 		} else {
-           changed = true
+			changed = true
 		}
 	}
 
@@ -580,16 +579,16 @@ func validateAndWriteDownloaderConfig(config types.DownloaderConfig,
 func validateBaseOsConfig(baseOsList []types.BaseOsConfig) bool {
 
 	var osCount, activateCount int
-	if len (baseOsList) > 2 {
+	if len(baseOsList) > 2 {
 		return false
 	}
 
 	//count base os instance activate count
 	for _, baseOsInstance := range baseOsList {
 
-		osCount ++
+		osCount++
 		if baseOsInstance.Activate == true {
-			activateCount ++
+			activateCount++
 		}
 	}
 
