@@ -59,6 +59,7 @@ type BaseOsStatus struct {
 	UUIDandVersion    UUIDandVersion
 	DisplayName       string
 	BaseOsVersion     string
+	ConfigSha256      string
 	Activated         bool
 	StorageStatusList []StorageStatus
 	// Mininum state across all steps and all StorageStatus.

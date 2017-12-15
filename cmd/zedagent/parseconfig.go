@@ -7,8 +7,10 @@ import (
 	"github.com/zededa/api/zconfig"
 	"github.com/zededa/go-provision/types"
 	"io/ioutil"
+	"reflect"
 	"log"
 	"net"
+	"os"
 	"strings"
 )
 
@@ -65,11 +67,15 @@ func parseBaseOsConfig (config *zconfig.EdgeDevConfig) {
 
 			if imageCount != 0 {
 				baseOs.StorageConfigList = make([]types.StorageConfig, imageCount)
-				parseStorageConfigList(config, baseOs.StorageConfigList, cfgOs.Drives)
+				parseStorageConfigList(config, baseOsObj, baseOs.StorageConfigList,
+										cfgOs.Drives)
 			}
 
 			baseOsList[idx] = *baseOs
 
+            getCerts(baseOs.StorageConfigList)
+
+			// Dump the config content
 			bytes, err := json.Marshal(baseOs)
 
 			if err == nil {
@@ -124,14 +130,15 @@ func parseAppInstanceConfig (config *zconfig.EdgeDevConfig) {
 
 		if imageCount != 0 {
 			appInstance.StorageConfigList = make([]types.StorageConfig, imageCount)
-			parseStorageConfigList(config, appInstance.StorageConfigList, cfgApp.Drives)
+			parseStorageConfigList(config, appImgObj, appInstance.StorageConfigList,
+									 cfgApp.Drives)
 		}
 
 		// fill the overlay/underlay config
 		parseNetworkConfig(&appInstance, cfgApp, config.Networks)
 
 		// get the certs for image sha verification
-		getCerts(appInstance)
+		getCerts(appInstance.StorageConfigList)
 
 		if validateAppInstanceConfig(appInstance) == true {
 
@@ -143,8 +150,9 @@ func parseAppInstanceConfig (config *zconfig.EdgeDevConfig) {
 	}
 }
 
-func parseStorageConfigList(config *zconfig.EdgeDevConfig, storageList []types.StorageConfig,
-					drives []*zconfig.Drive) {
+func parseStorageConfigList(config *zconfig.EdgeDevConfig, objType string,
+					 storageList []types.StorageConfig,
+					 drives []*zconfig.Drive) {
 
 	var idx int = 0
 
@@ -180,10 +188,12 @@ func parseStorageConfigList(config *zconfig.EdgeDevConfig, storageList []types.S
 		image.Devtype = strings.ToLower(drive.Drvtype.String())
 		image.ImageSignature = drive.Image.Siginfo.Signature
 		image.ImageSha256 = drive.Image.Sha256
+		image.ObjType = objType
 
 		// copy the certificates
 		if drive.Image.Siginfo.Signercerturl != "" {
 			image.SignatureKey = drive.Image.Siginfo.Signercerturl
+			image.NeedVerification = true
 		}
 
 		// XXX:FIXME certificates can be many
@@ -436,9 +446,9 @@ func writeBaseOsStatus(baseOsStatus *types.BaseOsStatus,
 	}
 }
 
-func getCerts(appInstance types.AppInstanceConfig) {
+func getCerts(drives []types.StorageConfig) {
 
-	for _, image := range appInstance.StorageConfigList {
+	for _, image := range drives {
 
 		writeCertConfig(image, image.SignatureKey)
 
@@ -454,15 +464,14 @@ func writeCertConfig(image types.StorageConfig, certUrl string) {
 		return
 	}
 
-	// XXX make into const
-	var baseCertDirname = "/var/tmp/downloader/cert.obj"
-	var configCertDirname = baseCertDirname + "/config"
-
 	var safename = types.UrlToSafename(certUrl, "")
+
+	var configFilename = fmt.Sprintf("%s/%s.json", certConfigDirname, safename)
 
 	// XXX:FIXME dpath/key/pwd from image storage
 	// should be coming from Drive
 	// also the sha for the cert should be set
+	// for now shortcutting it to only downloader
 	var config = &types.DownloaderConfig{
 		Safename:        safename,
 		DownloadURL:     certUrl,
@@ -472,20 +481,99 @@ func writeCertConfig(image types.StorageConfig, certUrl string) {
 		ApiKey:          image.ApiKey,
 		Password:        image.Password,
 		ImageSha256:     "",
+		ObjType:		 certObj,
+		NeedVerification: false,
 		DownloadObjDir:  certsPendingDirname,
 		FinalObjDir :    certsDirname,
 		RefCount:        1,
 	}
 
-	bytes, err := json.Marshal(config)
-	if err != nil {
-		log.Fatal(err, "json Marshal certConfig")
+	validateAndWriteDownloaderConfig(*config, configFilename)
+}
+
+func validateAndWriteVerifierConfig(config types.VerifyImageConfig,
+									 configFilename string) {
+	changed := false
+
+	if _, err := os.Stat(configFilename); err != nil {
+		changed = true
+	} else {
+
+		var dConfig types.DownloaderConfig
+
+		log.Printf("%s file exists\n", configFilename)
+
+		cb, err := ioutil.ReadFile(configFilename)
+		if err == nil {
+
+			if err:= json.Unmarshal(cb, &dConfig); err != nil {
+                changed = true
+			}
+
+            if !reflect.DeepEqual(dConfig, config) {
+                fmt.Printf("configChanged\n", configFilename)
+                changed = true
+            }
+		} else {
+           changed = true
+		}
 	}
 
-	configFilename := fmt.Sprintf("%s/%s.json", configCertDirname, safename)
-	err = ioutil.WriteFile(configFilename, bytes, 0644)
-	if err != nil {
-		log.Fatal(err)
+	if changed == true {
+
+		bytes, err := json.Marshal(config)
+
+		if err != nil {
+			log.Fatal(err, "json Marshal downloaderConfig")
+		}
+
+		err = ioutil.WriteFile(configFilename, bytes, 0644)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+}
+
+func validateAndWriteDownloaderConfig(config types.DownloaderConfig,
+									 configFilename string) {
+	changed := false
+
+	if _, err := os.Stat(configFilename); err != nil {
+		changed = true
+	} else {
+
+		var dConfig types.DownloaderConfig
+
+		log.Printf("%s file exists\n", configFilename)
+
+		cb, err := ioutil.ReadFile(configFilename)
+		if err == nil {
+
+			if err:= json.Unmarshal(cb, &dConfig); err != nil {
+                changed = true
+			}
+
+            if !reflect.DeepEqual(dConfig, config) {
+                fmt.Printf("configChanged\n", configFilename)
+                changed = true
+            }
+		} else {
+           changed = true
+		}
+	}
+
+	if changed == true {
+
+		bytes, err := json.Marshal(config)
+
+		if err != nil {
+			log.Fatal(err, "json Marshal downloaderConfig")
+		}
+
+		err = ioutil.WriteFile(configFilename, bytes, 0644)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 }
 

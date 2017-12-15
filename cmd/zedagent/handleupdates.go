@@ -10,8 +10,6 @@ import (
 	"fmt"
 	"log"
 	"errors"
-	"io/ioutil"
-	"encoding/json"
 	"reflect"
 	"os"
 	"time"
@@ -90,6 +88,7 @@ func addOrUpdateBaseOsConfig(uuidStr string, config types.BaseOsConfig) {
 		    UUIDandVersion: config.UUIDandVersion,
 		    DisplayName:    config.DisplayName,
 		    BaseOsVersion:  config.BaseOsVersion,
+			ConfigSha256:   config.ConfigSha256,
 		}
 
 		status.StorageStatusList = make([]types.StorageStatus,
@@ -100,6 +99,7 @@ func addOrUpdateBaseOsConfig(uuidStr string, config types.BaseOsConfig) {
 		    ss.DownloadURL = sc.DownloadURL
 		    ss.ImageSha256 = sc.ImageSha256
 		    ss.Target = sc.Target
+			status.ConfigSha256 = sc.ImageSha256 // XXX:FIXME
 		}
 
 		baseOsStatusMap[uuidStr] = status
@@ -194,6 +194,12 @@ func doBaseOsActivate(uuidStr string, config types.BaseOsConfig,
 	changed := false
 
 	// XXX:FIXME do the stuff here
+	if status.State == types.INSTALLED {
+		if status.Activated  == false {
+			status.Activated = true
+			changed = true
+		}
+	}
 
 	return changed
 }
@@ -632,7 +638,7 @@ func createDownloaderConfig(objType string, safename string,
 	configFilename := fmt.Sprintf("%s/%s.json",
 			downloaderConfigBaseDirname + "/" + objType + "/config", safename)
 
-	writeDownloaderConfig(downloaderConfigMap[key], configFilename)
+	validateAndWriteDownloaderConfig(downloaderConfigMap[key], configFilename)
 
 	log.Printf("createDownloaderConfig done for %s\n",
 		safename)
@@ -670,7 +676,7 @@ func createVerifierConfig(objType string, safename string,
 	configFilename := fmt.Sprintf("%s/%s.json",
 			verifierConfigBaseDirname + "/" + objType + "/config", safename)
 
-	writeVerifierConfig(verifierConfigMap[key], configFilename)
+	validateAndWriteVerifierConfig(verifierConfigMap[key], configFilename)
 
 	log.Printf("createVerifierConfig done for %s\n",
 		safename)
@@ -819,35 +825,6 @@ func removeVerifierStatus(objType string, statusFilename string) {
 	delete(verifierStatusMap, key)
 
 	log.Printf("removeVerifierStatus done for %s\n", key)
-}
-
-func writeDownloaderConfig(config types.DownloaderConfig,
-					configFilename string) {
-
-	b, err := json.Marshal(config)
-	if err != nil {
-		log.Fatal(err, "json Marshal DownloaderConfig")
-	}
-	// We assume a /var/run path hence we don't need to worry about
-	// partial writes/empty files due to a kernel crash.
-	err = ioutil.WriteFile(configFilename, b, 0644)
-	if err != nil {
-		log.Fatal(err, configFilename)
-	}
-}
-
-func writeVerifierConfig(config types.VerifyImageConfig,
-	configFilename string) {
-	b, err := json.Marshal(config)
-	if err != nil {
-		log.Fatal(err, "json Marshal VeriferConfig")
-	}
-	// We assume a /var/run path hence we don't need to worry about
-	// partial writes/empty files due to a kernel crash.
-	err = ioutil.WriteFile(configFilename, b, 0644)
-	if err != nil {
-		log.Fatal(err, configFilename)
-	}
 }
 
 func lookupBaseOsVerificationStatusSha256Internal(sha256 string) (*types.VerifyImageStatus, error) {

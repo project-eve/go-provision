@@ -22,7 +22,7 @@ const (
 
     baseDirname    = "/var/tmp/zedagent"
     runDirname     = "/var/run/zedagent"
-    objDnldDirname = baseDirname + "/downloads"
+    objDnldDirname = "/var/tmp/zedmanager/downloads"
 	certsDirname   = "/var/tmp/zedmanager/certs"
 
     zedagentConfigDirname         = baseDirname + "/config"
@@ -36,6 +36,11 @@ const (
 
     verifierConfigBaseDirname     = "/var/tmp/verifier"
     verifierStatusBaseDirname     = "/var/run/verifier"
+
+	certBaseDirname     = downloaderConfigBaseDirname + "/" + certObj
+	certRunDirname      = downloaderStatusBaseDirname + "/" + certObj
+	certConfigDirname   = certBaseDirname + "/config"
+	certStatusDirname   = certRunDirname + "/status"
 
     zedagentBaseOsConfigDirname   = baseDirname + "/" + baseOsObj + "/config"
     zedagentBaseOsStatusDirname   = runDirname  + "/" + baseOsObj + "/status"
@@ -55,7 +60,6 @@ const (
 	baseOsPendingDirname  = baseOsCatalogDirname + "/pending"
 	baseOsVerifierDirname = baseOsCatalogDirname + "/verifier"
 	baseOsVerifiedDirname = baseOsCatalogDirname + "/verified"
-
 )
 
 func main() {
@@ -73,17 +77,21 @@ func main() {
         zedagentConfigDirname,
         zedagentStatusDirname,
 
+        zedmanagerConfigDirname,
+        zedmanagerStatusDirname,
+
         zedagentBaseOsConfigDirname,
         zedagentBaseOsStatusDirname,
 
-        zedmanagerConfigDirname,
-        zedmanagerStatusDirname,
+		certConfigDirname,
+		certStatusDirname,
 
         downloaderBaseOsConfigDirname,
         downloaderBaseOsStatusDirname,
 
         verifierBaseOsConfigDirname,
         verifierBaseOsStatusDirname,
+
     }
 
     for _, dir := range dirs {

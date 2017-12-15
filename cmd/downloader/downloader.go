@@ -49,6 +49,9 @@ const (
 	objDnldDirname = "/var/tmp/zedmanager/downloads"
 	certsDirname   = "/var/tmp/zedmanager/certs"
 
+	downloaderConfigDirname = baseDirname + "/config"
+	downloaderStatusDirname = runDirname + "/status"
+
 	appImgBaseDirname   = baseDirname + "/" + appImgObj
 	appImgRunDirname    = runDirname + "/" + appImgObj
 	appImgConfigDirname = appImgBaseDirname + "/config"
@@ -245,8 +248,8 @@ func handleCreate(config types.DownloaderConfig, statusFilename string) {
 
 	// Update reserved space. Keep reserved until doDelete
 	// XXX RefCount -> 0 should keep it reserved.
-	status.ReservedSpace = config.MaxSize
-	globalStatus.ReservedSpace += status.ReservedSpace
+	status.ReservedSpace += config.MaxSize
+	globalStatus.ReservedSpace += config.MaxSize
 	updateRemainingSpace()
 
 	// If RefCount == 0 then we don't yet download.
@@ -399,6 +402,9 @@ func downloaderInit() {
 		baseDirname,
 		runDirname,
 
+		downloaderConfigDirname,
+		downloaderStatusDirname,
+
 		appImgBaseDirname,
 		appImgRunDirname,
 		appImgConfigDirname,
@@ -457,8 +463,8 @@ func downloaderInit() {
 	}
 
 	// now start
-	configFilename := baseDirname + "/global"
-	statusFilename := runDirname + "/global"
+	configFilename := downloaderConfigDirname + "/global"
+	statusFilename := downloaderStatusDirname + "/global"
 
 	globalStatusFilename = statusFilename
 
@@ -748,10 +754,14 @@ func handleSyncOpResponse(config types.DownloaderConfig,
 		return
 	}
 
+	// firstly, reset the reserved space
+	globalStatus.ReservedSpace -= config.MaxSize
+	status.ReservedSpace -= config.MaxSize
+
 	// XXX Compare against MaxSize and reject? Already wasted the space?
 	status.Size = uint((info.Size() + 1023) / 1024)
 
-	if status.Size > config.MaxSize {
+	if (config.MaxSize != 0) && (status.Size > config.MaxSize) {
 		// Delete file
 		errString := fmt.Sprintf("Size exceeds MaxSize; %d vs. %d for %s\n",
 			status.Size, config.MaxSize, status.DownloadURL)
@@ -770,8 +780,7 @@ func handleSyncOpResponse(config types.DownloaderConfig,
 		return
 	}
 
-	globalStatus.ReservedSpace -= status.ReservedSpace
-	status.ReservedSpace = 0
+	// update the used space
 	globalStatus.UsedSpace += status.Size
 	updateRemainingSpace()
 

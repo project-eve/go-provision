@@ -341,7 +341,7 @@ func PublishDeviceInfoToZedCloud(baseOsStatus map[string]types.BaseOsStatus) {
 	for _,value := range baseOsStatus {
 		ReportDeviceSoftwareInfo := new(zmet.ZInfoSW)
 		ReportDeviceSoftwareInfo.SwVersion = value.BaseOsVersion
-		ReportDeviceSoftwareInfo.SwHash = *proto.String(" ")
+		ReportDeviceSoftwareInfo.SwHash = value.ConfigSha256
 		ReportDeviceSoftwareInfo.State = zmet.ZSwState(value.State)
 		ReportDeviceSoftwareInfo.Activated = value.Activated
 		ReportDeviceInfo.SoftwareList[idx] = ReportDeviceSoftwareInfo

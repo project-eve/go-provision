@@ -99,7 +99,8 @@ func main() {
 		select {
 		case change := <-appImgChanges:
 			{
-				go watch.HandleConfigStatusEvent(change,
+				log.Printf("handleAppImage Event\n")
+				watch.HandleConfigStatusEvent(change,
 						appImgConfigDirname,
 						appImgStatusDirname,
 						&types.VerifyImageConfig{},
@@ -111,7 +112,8 @@ func main() {
 			}
 		case change := <-baseOsChanges:
 			{
-				go watch.HandleConfigStatusEvent(change,
+				log.Printf("handleBaseImage Event\n")
+				watch.HandleConfigStatusEvent(change,
 						baseOsConfigDirname,
 						baseOsStatusDirname,
 						&types.VerifyImageConfig{},
@@ -180,34 +182,40 @@ func handleCreate(statusFilename string, configArg interface{}) {
 	fmt.Printf("Move from %s to %s\n", pendingFilename, verifierFilename)
 
 	if _, err := os.Stat(pendingFilename); err != nil {
-		log.Fatal(err)
+		log.Println(err)
+		return
 	}
 
 	if _, err := os.Stat(verifierDirname); err == nil {
 		if err := os.RemoveAll(verifierDirname); err != nil {
-			log.Fatal(err)
+			log.Println(err)
+			return
 		}
 	}
 
 	if err := os.MkdirAll(verifierDirname, 0700); err != nil {
-		log.Fatal(err)
+		log.Println(err)
+		return
 	}
 
 	if err := os.Rename(pendingFilename, verifierFilename); err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 
 	if err := os.Chmod(verifierDirname, 0500); err != nil {
-		log.Fatal(err)
+		log.Println(err)
+		return
 	}
 
 	if err := os.Chmod(verifierFilename, 0400); err != nil {
-		log.Fatal(err)
+		log.Println(err)
+		return
 	}
 
 	// Clean up empty directory
 	if err := os.Remove(pendingDirname); err != nil {
-		log.Fatal(err)
+		log.Println(err)
+		return
 	}
 
 	log.Printf("Verifying URL %s file %s\n",
