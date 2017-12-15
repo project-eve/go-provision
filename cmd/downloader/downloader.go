@@ -214,7 +214,14 @@ func handleObjectDelete(statusFilename string, statusArg interface{}) {
 
 func handleCreate(config types.DownloaderConfig, statusFilename string) {
 
+	log.Printf("handleCreate: %s \n", config.DownloadURL)
+
+     if isOk := validateDownloadConfigCreate (config, statusFilename); isOk != true {
+		return
+	}
+
 	var syncOp zedUpload.SyncOpType = zedUpload.SyncOpDownload
+
 
 	// Start by marking with PendingAdd
 	status := types.DownloaderStatus{
@@ -832,4 +839,34 @@ func installObject(config types.DownloaderConfig,
 	status.State   = types.INSTALLED
 	status.ModTime = time.Now()
 	writeDownloaderStatus(status, statusFilename)
+}
+
+func validateDownloadConfigCreate (config types.DownloaderConfig, statusFilename string)  bool {
+
+	var  isOk bool = true
+	if _, err := os.Stat(statusFilename); err == nil {
+
+		log.Printf("handleCreate: %s exists\n", statusFilename)
+
+		cb, err := ioutil.ReadFile(statusFilename)
+		if err != nil {
+			log.Printf("handleCreate: %s for %s\n", err, statusFilename)
+			isOk = false
+		} else {
+
+			var status types.DownloaderStatus
+
+			if err := json.Unmarshal(cb, &status); err != nil {
+				log.Printf("handleCreate: %s downloadStatus file: %s\n",
+					err, statusFilename)
+				isOk = false
+			} else {
+				if status.State >= types.DOWNLOAD_STARTED {
+					log.Printf("handleCreate: download status %v \n", status.State)
+					isOk = false
+				}
+			}
+		}
+	}
+	return isOk
 }
