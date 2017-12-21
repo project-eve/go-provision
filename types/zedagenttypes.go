@@ -34,14 +34,14 @@ type OsVerParams struct {
 // is driven by the Activate attribute.
 
 type BaseOsConfig struct {
-	UUIDandVersion      UUIDandVersion
-	DisplayName         string
-	BaseOsVersion       string
-	ConfigSha256        string
-	ConfigSignature     string
-    OsParams            []OsVerParams
-	StorageConfigList   []StorageConfig
-	Activate            bool
+	UUIDandVersion    UUIDandVersion
+	DisplayName       string
+	BaseOsVersion     string
+	ConfigSha256      string
+	ConfigSignature   string
+	OsParams          []OsVerParams
+	StorageConfigList []StorageConfig
+	Activate          bool
 }
 
 func (config BaseOsConfig) VerifyFilename(fileName string) bool {
@@ -89,5 +89,63 @@ func (status BaseOsStatus) CheckPendingModify() bool {
 }
 
 func (status BaseOsStatus) CheckPendingDelete() bool {
+	return false
+}
+
+// This is what we assume will come from the ZedControl for base OS.
+// Note that we can have different versions  configured for the
+// same UUID, hence the key is the UUIDandVersion  We assume the
+// elements in StorageConfig should be installed, but activation
+// is driven by the Activate attribute.
+
+type CertObjConfig struct {
+	UUIDandVersion    UUIDandVersion
+	DisplayName       string
+	ConfigSha256      string
+	StorageConfigList []StorageConfig
+}
+
+func (config CertObjConfig) VerifyFilename(fileName string) bool {
+	uuid := config.UUIDandVersion.UUID
+	ret := uuid.String()+".json" == fileName
+	if !ret {
+		log.Printf("Mismatch between filename and contained uuid: %s vs. %s\n",
+			fileName, uuid.String())
+	}
+	return ret
+}
+
+// Indexed by UUIDandVersion as above
+type CertObjStatus struct {
+	UUIDandVersion    UUIDandVersion
+	ConfigSha256      string
+	StorageStatusList []StorageStatus
+	// Mininum state across all steps and all StorageStatus.
+	// INITIAL implies error.
+	State SwState
+	// All error strngs across all steps and all StorageStatus
+	Error     string
+	ErrorTime time.Time
+}
+
+func (status CertObjStatus) VerifyFilename(fileName string) bool {
+	uuid := status.UUIDandVersion.UUID
+	ret := uuid.String()+".json" == fileName
+	if !ret {
+		log.Printf("Mismatch between filename and contained uuid: %s vs. %s\n",
+			fileName, uuid.String())
+	}
+	return ret
+}
+
+func (status CertObjStatus) CheckPendingAdd() bool {
+	return false
+}
+
+func (status CertObjStatus) CheckPendingModify() bool {
+	return false
+}
+
+func (status CertObjStatus) CheckPendingDelete() bool {
 	return false
 }

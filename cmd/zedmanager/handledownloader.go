@@ -41,7 +41,7 @@ func AddOrRefcountDownloaderConfig(safename string, sc *types.StorageConfig) {
 			Password:         sc.Password,
 			ImageSha256:      sc.ImageSha256,
 			DownloadObjDir:   sc.DownloadObjDir,
-			FinalObjDir:	  sc.FinalObjDir,
+			FinalObjDir:      sc.FinalObjDir,
 			NeedVerification: sc.NeedVerification,
 			RefCount:         1,
 		}

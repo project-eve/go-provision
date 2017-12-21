@@ -35,13 +35,13 @@ echo "Configuration from factory/install:"
 echo
 
 #echo "Update version info in $ETCDIR/version"
-#cat $ETCDIR/version_tag >$ETCDIR/version
-#for AGENT in $ALLAGENTS; do
+cat $ETCDIR/version_tag >$ETCDIR/version
+for AGENT in $ALLAGENTS; do
 #    $BINDIR/$AGENT -v >>$ETCDIR/version
-#done
+done
 
-#echo "Combined version:"
-#cat $ETCDIR/version
+echo "Combined version:"
+cat $ETCDIR/version
 
 # We need to try our best to setup time *before* we generate the certifiacte.
 # Otherwise it may have start date in the future

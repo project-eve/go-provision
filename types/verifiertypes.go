@@ -22,9 +22,9 @@ import (
 // The key/index to this is the Safename which is allocated by ZedManager.
 // That is the filename in which we store the corresponding json files.
 type VerifyImageConfig struct {
-	Safename         string   // Also refers to the dirname in pending dir
-	DownloadURL      string   // For logging output
-	ImageSha256      string   // sha256 of immutable image
+	Safename         string // Also refers to the dirname in pending dir
+	DownloadURL      string // For logging output
+	ImageSha256      string // sha256 of immutable image
 	ObjType          string
 	RefCount         uint     // Zero means can delete file
 	CertificateChain []string //name of intermediate certificates
@@ -49,7 +49,7 @@ type VerifyImageStatus struct {
 	PendingAdd    bool
 	PendingModify bool
 	PendingDelete bool
-	ImageSha256   string  // sha256 of immutable image
+	ImageSha256   string // sha256 of immutable image
 	ObjType       string
 	State         SwState // DELIVERED, or INITIAL if failed
 	LastErr       string  // Verification error

@@ -118,15 +118,15 @@ type StorageConfig struct {
 	DownloadObjDir   string
 	FinalObjDir      string
 	NeedVerification bool
-	Format  string // Default "raw"; could be raw, qcow, qcow2, vhd
-	Devtype string // Default ""; could be e.g. "cdrom"
-	Target  string // Default "" is interpreted as "disk"
+	Format           string // Default "raw"; could be raw, qcow, qcow2, vhd
+	Devtype          string // Default ""; could be e.g. "cdrom"
+	Target           string // Default "" is interpreted as "disk"
 }
 
 type StorageStatus struct {
 	DownloadURL        string
 	ImageSha256        string  // sha256 of immutable image
-	Target		   string  // Default "" is interpreted as "disk"
+	Target             string  // Default "" is interpreted as "disk"
 	State              SwState // DOWNLOADED etc
 	HasDownloaderRef   bool    // Reference against downloader to clean up
 	HasVerifierRef     bool    // Reference against verifier to clean up

@@ -181,7 +181,7 @@ func LookupVerifyImageStatusSha256(sha256 string) (types.VerifyImageStatus,
 }
 
 func LookupVerifyImageStatusAny(safename string,
-     sha256 string) (types.VerifyImageStatus, error) {
+	sha256 string) (types.VerifyImageStatus, error) {
 	m0, err := LookupVerifyImageStatus(safename)
 	if err == nil {
 		return m0, nil
@@ -193,7 +193,7 @@ func LookupVerifyImageStatusAny(safename string,
 		return *m1, nil
 	} else {
 		return types.VerifyImageStatus{},
-		       errors.New("No VerifyImageStatus for safename nor sha")
+			errors.New("No VerifyImageStatus for safename nor sha")
 	}
 }
 
