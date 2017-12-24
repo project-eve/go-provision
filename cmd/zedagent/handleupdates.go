@@ -69,3 +69,7 @@ func lookupBaseOsVerificationStatusAny(safename string, sha256 string) (types.Ve
 func appendError(allErrors string, prefix string, lasterr string) string {
 	return fmt.Sprintf("%s%s: %s\n\n", allErrors, prefix, lasterr)
 }
+
+func formLookupKey(objType string, uuidStr string) string {
+	return objType + "x" + uuidStr
+}

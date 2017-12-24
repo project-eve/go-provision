@@ -2,13 +2,34 @@
 // All rights reserved.
 
 // zedAgent interfaces with zedcloud for
-// 1. config sync
-// 2. status/metric/info pubish
-// zeagent orchestrates base os installation
-// app instance config is pushed to zedmanager for further
-// orchestration
+//   * config sync
+//   * metric/info pubish
+// app instance config is pushed to zedmanager for orchestration
 // event based app instance/device info published to ZedCloud
+// periodic status/metric published to zedCloud
+// zeagent orchestrates base os/certs installation
 
+// zedagent handles the following orchestration
+//   * base os config/status          <zedagent>   / <baseos> / <config | status>
+//   * certs config/status            <zedagent>   / certs>   / <config | status>
+//   * base os download config/status <downloader> / <baseos> / <config | status>
+//   * certs download config/status   <downloader> / <certs>  / <config | status>
+//   * base os verifier config/status <verifier>   / <baseos> / <config | status>
+// <base os>
+//   <zedagent>   <baseos> <config> --> <zedagent>    <baseos> <status>
+//				<download>...       --> <downloader>  <baseos> <config>
+//   <downloader> <baseos> <config> --> <downloader>  <baseos> <status>
+//				<downloaded>...     --> <downloader>  <baseos> <status>
+//								    --> <zedagent>    <baseos> <status>
+//								    --> <verifier>    <baseos> <config>
+//				<verified>  ...     --> <verifier>    <baseos> <status>
+//								    --> <zedagent>    <baseos> <status>
+// <certs>
+//   <zedagent>   <certs> <config> --> <zedagent>    <certs> <status>
+//				<download>...      --> <downloader>  <certs> <config>
+//   <downloader> <certs> <config> --> <downloader>  <certs> <status>
+//				<downloaded>...    --> <downloader>  <certs> <status>
+//								   --> <zedagent>    <certs> <status>
 package main
 
 import (
@@ -60,7 +81,7 @@ const (
 	downloaderCertObjConfigDirname = downloaderBaseDirname + "/" + certObj + "/config"
 	downloaderCertObjStatusDirname = downloaderRunDirname + "/" + certObj + "/status"
 
-	// certificate verifier config/status holder
+	// base os verifier config/status holder
 	verifierBaseOsConfigDirname = verifierBaseDirname + "/" + baseOsObj + "/config"
 	verifierBaseOsStatusDirname = verifierRunDirname + "/" + baseOsObj + "/status"
 
@@ -156,15 +177,15 @@ func main() {
 	go watch.WatchConfigStatus(zedagentCertObjConfigDirname,
 		zedagentCertObjStatusDirname, certObjConfigStatusChanges)
 
-	// baseOs download watcher
+	// baseOs download status watcher
 	go watch.WatchStatus(downloaderBaseOsStatusDirname,
 		baseOsDownloaderChanges)
 
-	// baseOs verification watcher
+	// baseOs verification status watcher
 	go watch.WatchStatus(verifierBaseOsStatusDirname,
 		baseOsVerifierChanges)
 
-	// cert download watcher
+	// certificate download status watcher
 	go watch.WatchStatus(downloaderCertObjStatusDirname,
 		certObjDownloaderChanges)
 
@@ -243,6 +264,9 @@ func main() {
 	}
 }
 
+// app instance event watch to capture tranisions
+// and publish to zedCloud
+
 func handleAppInstanceStatusCreate(statusFilename string,
 	configArg interface{}) {
 
@@ -287,6 +311,8 @@ func handleAppInstanceStatusDelete(statusFilename string,
 	PublishAppInfoToZedCloud(status)
 }
 
+// base os config/status event handlers
+// base os config create event
 func handleBaseOsCreate(statusFilename string, configArg interface{}) {
 
 	var config *types.BaseOsConfig
@@ -297,12 +323,14 @@ func handleBaseOsCreate(statusFilename string, configArg interface{}) {
 	case *types.BaseOsConfig:
 		config = configArg.(*types.BaseOsConfig)
 	}
+	uuidStr := config.UUIDandVersion.UUID.String()
 
-	log.Printf("handleBaseOsCreate for %s\n", config.BaseOsVersion)
-	addOrUpdateBaseOsConfig(config.UUIDandVersion.UUID.String(), *config)
+	log.Printf("handleBaseOsCreate for %s\n", uuidStr)
+	addOrUpdateBaseOsConfig(uuidStr, *config)
 	PublishDeviceInfoToZedCloud(baseOsStatusMap)
 }
 
+// base os config modify event
 func handleBaseOsModify(statusFilename string,
 	configArg interface{}, statusArg interface{}) {
 
@@ -317,6 +345,8 @@ func handleBaseOsModify(statusFilename string,
 		log.Printf("handleBaseOsModify for %s\n", config.BaseOsVersion)
 	}
 
+	uuidStr := config.UUIDandVersion.UUID.String()
+
 	switch statusArg.(type) {
 	default:
 		log.Fatal("Can only handle BaseOsStatus")
@@ -327,18 +357,19 @@ func handleBaseOsModify(statusFilename string,
 
 	if config.UUIDandVersion.Version == status.UUIDandVersion.Version {
 		log.Printf("Same version %s for %s\n",
-			config.UUIDandVersion.Version, statusFilename)
+			config.UUIDandVersion.Version, uuidStr)
 		return
 	}
 
+	// update the version field, uuis being the same
 	status.UUIDandVersion = config.UUIDandVersion
-
 	writeBaseOsStatus(status, statusFilename)
 
-	addOrUpdateBaseOsConfig(config.UUIDandVersion.UUID.String(), *config)
+	addOrUpdateBaseOsConfig(uuidStr, *config)
 	PublishDeviceInfoToZedCloud(baseOsStatusMap)
 }
 
+// base os config delete event
 func handleBaseOsDelete(statusFilename string,
 	statusArg interface{}) {
 
@@ -351,16 +382,17 @@ func handleBaseOsDelete(statusFilename string,
 		status = statusArg.(*types.BaseOsStatus)
 	}
 
-	log.Printf("handleBaseOsDelete for %s\n", status.DisplayName)
+	log.Printf("handleBaseOsDelete for %s\n", status.BaseOsVersion)
 
 	removeBaseOsConfig(status.UUIDandVersion.UUID.String())
 	PublishDeviceInfoToZedCloud(baseOsStatusMap)
 }
 
+// certificate config/status event handlers
+// certificate config create event
 func handleCertObjCreate(statusFilename string, configArg interface{}) {
 
 	var config *types.CertObjConfig
-	var uuidStr string = config.UUIDandVersion.UUID.String()
 
 	switch configArg.(type) {
 	default:
@@ -369,10 +401,13 @@ func handleCertObjCreate(statusFilename string, configArg interface{}) {
 		config = configArg.(*types.CertObjConfig)
 	}
 
+	uuidStr := config.UUIDandVersion.UUID.String()
+
 	log.Printf("handleCertObjCreate for %s\n", uuidStr)
 	addOrUpdateCertObjConfig(uuidStr, *config)
 }
 
+// certificate config modify event
 func handleCertObjModify(statusFilename string,
 	configArg interface{}, statusArg interface{}) {
 
@@ -386,16 +421,16 @@ func handleCertObjModify(statusFilename string,
 		config = configArg.(*types.CertObjConfig)
 	}
 
-	var uuidStr string = config.UUIDandVersion.UUID.String()
-	log.Printf("handleCertObjModify for %s\n", uuidStr)
+	uuidStr := config.UUIDandVersion.UUID.String()
 
 	switch statusArg.(type) {
 	default:
 		log.Fatal("Can only handle CertObjStatus")
 	case *types.CertObjStatus:
 		status = statusArg.(*types.CertObjStatus)
-		log.Printf("handleCertObjModify for %s\n", uuidStr)
 	}
+
+	log.Printf("handleCertObjModify for %s\n", uuidStr)
 
 	// XXX:FIXME, do we
 	if config.UUIDandVersion.Version == status.UUIDandVersion.Version {
@@ -410,6 +445,7 @@ func handleCertObjModify(statusFilename string,
 	addOrUpdateCertObjConfig(uuidStr, *config)
 }
 
+// certificate config delete event
 func handleCertObjDelete(statusFilename string, statusArg interface{}) {
 
 	var status *types.CertObjStatus
@@ -420,13 +456,14 @@ func handleCertObjDelete(statusFilename string, statusArg interface{}) {
 	case *types.CertObjStatus:
 		status = statusArg.(*types.CertObjStatus)
 	}
-	var uuidStr string = status.UUIDandVersion.UUID.String()
+	uuidStr := status.UUIDandVersion.UUID.String()
 
 	log.Printf("handleCertObjDelete for %s\n", uuidStr)
 
 	removeCertObjConfig(uuidStr)
 }
 
+// base os download status change event
 func handleBaseOsDownloadStatusModify(statusFilename string,
 	statusArg interface{}) {
 
@@ -444,6 +481,7 @@ func handleBaseOsDownloadStatusModify(statusFilename string,
 	updateDownloaderStatus(baseOsObj, status)
 }
 
+// base os download status delete event
 func handleBaseOsDownloadStatusDelete(statusFilename string) {
 
 	log.Printf("handleBaseOsDownloadStatusDelete for %s\n",
@@ -451,6 +489,7 @@ func handleBaseOsDownloadStatusDelete(statusFilename string) {
 	removeDownloaderStatus(baseOsObj, statusFilename)
 }
 
+// base os verification status change event
 func handleBaseOsVerifierStatusModify(statusFilename string,
 	statusArg interface{}) {
 	var status *types.VerifyImageStatus
@@ -467,6 +506,7 @@ func handleBaseOsVerifierStatusModify(statusFilename string,
 	updateVerifierStatus(baseOsObj, status)
 }
 
+// base os verification status delete event
 func handleBaseOsVerifierStatusDelete(statusFilename string) {
 
 	log.Printf("handleBaseOsVeriferStatusDelete for %s\n",
@@ -474,6 +514,7 @@ func handleBaseOsVerifierStatusDelete(statusFilename string) {
 	removeVerifierStatus(baseOsObj, statusFilename)
 }
 
+// cerificate download status change event
 func handleCertObjDownloadStatusModify(statusFilename string,
 	statusArg interface{}) {
 
@@ -491,6 +532,7 @@ func handleCertObjDownloadStatusModify(statusFilename string,
 	updateDownloaderStatus(certObj, status)
 }
 
+// cerificate download status delete event
 func handleCertObjDownloadStatusDelete(statusFilename string) {
 
 	log.Printf("handleCertObjDownloadStatusDelete for %s\n",

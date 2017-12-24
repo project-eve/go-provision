@@ -4,16 +4,9 @@
 package types
 
 import (
-	"github.com/satori/go.uuid"
 	"log"
 	"time"
 )
-
-// UUID plus version
-type UUIDandVersion struct {
-	UUID    uuid.UUID
-	Version string
-}
 
 type UrlCloudCfg struct {
 	ConfigUrl  string
@@ -35,7 +28,6 @@ type OsVerParams struct {
 
 type BaseOsConfig struct {
 	UUIDandVersion    UUIDandVersion
-	DisplayName       string
 	BaseOsVersion     string
 	ConfigSha256      string
 	ConfigSignature   string
@@ -57,15 +49,15 @@ func (config BaseOsConfig) VerifyFilename(fileName string) bool {
 // Indexed by UUIDandVersion as above
 type BaseOsStatus struct {
 	UUIDandVersion    UUIDandVersion
-	DisplayName       string
 	BaseOsVersion     string
 	ConfigSha256      string
 	Activated         bool
+	OsParams          []OsVerParams
 	StorageStatusList []StorageStatus
-	// Mininum state across all steps and all StorageStatus.
+	// Mininum state across all steps/StorageStatus.
 	// INITIAL implies error.
 	State SwState
-	// All error strngs across all steps and all StorageStatus
+	// error strings across all steps/StorageStatus
 	Error     string
 	ErrorTime time.Time
 }
@@ -92,15 +84,14 @@ func (status BaseOsStatus) CheckPendingDelete() bool {
 	return false
 }
 
-// This is what we assume will come from the ZedControl for base OS.
-// Note that we can have different versions  configured for the
-// same UUID, hence the key is the UUIDandVersion  We assume the
-// elements in StorageConfig should be installed, but activation
-// is driven by the Activate attribute.
+// captures the certificate config currently embeded
+// in Storage config from various objects
+// the UUIDandVersion/Config Sha are just
+// copied from the holder object configuration
+// for indexing
 
 type CertObjConfig struct {
 	UUIDandVersion    UUIDandVersion
-	DisplayName       string
 	ConfigSha256      string
 	StorageConfigList []StorageConfig
 }
@@ -120,10 +111,10 @@ type CertObjStatus struct {
 	UUIDandVersion    UUIDandVersion
 	ConfigSha256      string
 	StorageStatusList []StorageStatus
-	// Mininum state across all steps and all StorageStatus.
+	// Mininum state across all steps/ StorageStatus.
 	// INITIAL implies error.
 	State SwState
-	// All error strngs across all steps and all StorageStatus
+	// error strings across all steps/StorageStatus
 	Error     string
 	ErrorTime time.Time
 }

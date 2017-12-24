@@ -39,12 +39,9 @@ func initVerifierMaps() {
 func createVerifierConfig(objType string, safename string,
 	sc *types.StorageConfig) {
 
-	if verifierConfigMap == nil {
-		log.Printf("create verifier config map\n")
-		verifierConfigMap = make(map[string]types.VerifyImageConfig)
-	}
+	initVerifierMaps()
 
-	key := objType + "x" + safename
+	key := formLookupKey(objType, safename)
 
 	if m, ok := verifierConfigMap[key]; ok {
 		log.Printf("downloader config exists for %s refcount %d\n",
@@ -76,30 +73,28 @@ func createVerifierConfig(objType string, safename string,
 
 func updateVerifierStatus(objType string, status *types.VerifyImageStatus) {
 
-	if verifierStatusMap == nil {
-		log.Printf("create verifier status map\n")
-		verifierStatusMap = make(map[string]types.VerifyImageStatus)
-	}
+	initVerifierMaps()
+
+	key := formLookupKey(objType, status.Safename)
+	log.Printf("updataVerifierStatus for %s\n", key)
 
 	// Ignore if any Pending* flag is set
 	if status.PendingAdd || status.PendingModify || status.PendingDelete {
-		log.Printf("updataVerifierStatus skipping due to Pending* for %s\n",
-			status.Safename)
+		log.Printf("updataVerifierStatus for %s, Skipping due to Pending*\n", key)
 		return
 	}
-
-	key := objType + "x" + status.Safename
 
 	changed := false
 	if m, ok := verifierStatusMap[key]; ok {
 		if status.State != m.State {
-			log.Printf("downloader map changed from %v to %v\n",
-				m.State, status.State)
+			log.Printf("updateVerifierStatus for %s, Verifier map state changed from %v to %v\n",
+				key, m.State, status.State)
 			changed = true
 		}
 	} else {
-		log.Printf("downloader map add for %v\n", status.State)
+		log.Printf("updateVerifierStatus for %s, Verifier map add for %v\n", key, status.State)
 		changed = true
+
 	}
 
 	if changed {
@@ -107,18 +102,19 @@ func updateVerifierStatus(objType string, status *types.VerifyImageStatus) {
 		baseOsHandleStatusUpdateSafename(status.Safename)
 	}
 
-	log.Printf("updateVerifierStatus done for %s\n", status.Safename)
+	log.Printf("updateVerifierStatus for %s, Done\n", key)
 }
 
 func removeVerifierConfig(objType string, safename string) {
 
-	key := objType + "x" + safename
+	key := formLookupKey(objType, safename)
+	log.Printf("removeVerifierConfig for %s, Done\n", key)
 
 	if _, ok := verifierConfigMap[key]; !ok {
 		log.Printf("removeVerifierConfig for %s - not found\n", key)
 		return
 	}
-	fmt.Printf("verifier config map delete for %s\n", key)
+	fmt.Printf("removeVerifierConfig for %s, verifier config map delete\n", key)
 	delete(verifierConfigMap, key)
 
 	configFilename := fmt.Sprintf("%s/%s/config/%s.json",
@@ -128,23 +124,22 @@ func removeVerifierConfig(objType string, safename string) {
 		log.Println(err)
 	}
 
-	log.Printf("removeVerifierConfig done for %s\n", key)
+	log.Printf("removeVerifierConfig for %s, Done\n", key)
 }
 
 func removeVerifierStatus(objType string, safename string) {
 
-	key := objType + "x" + safename
+	key := formLookupKey(objType, safename)
 
 	if _, ok := verifierStatusMap[key]; !ok {
-		log.Printf("removeVerifierStatus for %s - not found\n",
-			key)
+		log.Printf("removeVerifierStatus for %s, Verifier Status Map is absent\n", key)
 		return
 	}
 
-	fmt.Printf("verifier status map delete for %s\n", key)
+	fmt.Printf("removeVerifierStatus for %s, verifier status map delete\n", key)
 	delete(verifierStatusMap, key)
 
-	log.Printf("removeVerifierStatus done for %s\n", key)
+	log.Printf("removeVerifierStatus for %s, Done\n", key)
 }
 
 func lookupVerificationStatusSha256Internal(objType string, sha256 string) (*types.VerifyImageStatus, error) {
@@ -160,7 +155,7 @@ func lookupVerificationStatusSha256Internal(objType string, sha256 string) (*typ
 
 func lookupVerificationStatus(objType string, safename string) (types.VerifyImageStatus, error) {
 
-	key := objType + "x" + safename
+	key := formLookupKey(objType, safename)
 
 	if m, ok := verifierStatusMap[key]; ok {
 
@@ -177,11 +172,10 @@ func lookupVerificationStatusSha256(objType string, sha256 string) (types.Verify
 	m, err := lookupVerificationStatusSha256Internal(objType, sha256)
 	if err != nil {
 		return types.VerifyImageStatus{}, err
-	} else {
-		log.Printf("found status based on sha256 %s safename %s\n",
-			sha256, m.Safename)
-		return *m, nil
 	}
+	log.Printf("found status based on sha256 %s safename %s\n",
+		sha256, m.Safename)
+	return *m, nil
 }
 
 func lookupVerificationStatusAny(objType string, safename string, sha256 string) (types.VerifyImageStatus, error) {
@@ -205,6 +199,9 @@ func checkStorageVerifierStatus(objType string, uuidStr string,
 
 	allErrors := ""
 	var errorTime time.Time
+	key := formLookupKey(objType, uuidStr)
+
+	fmt.Printf("checkStorageVerifierStatus for %s\n", key)
 
 	changed := false
 	minState := types.MAXSTATE
@@ -213,14 +210,14 @@ func checkStorageVerifierStatus(objType string, uuidStr string,
 		ss := &status[i]
 
 		safename := types.UrlToSafename(sc.DownloadURL, sc.ImageSha256)
-		fmt.Printf("Found StorageConfig URL %s safename %s\n",
-			sc.DownloadURL, safename)
+		fmt.Printf("checkStorageVerifierStatus for %s, Found StorageConfig URL %s safename %s\n",
+			key, sc.DownloadURL, safename)
 
 		vs, err := lookupVerificationStatusAny(objType, safename, sc.ImageSha256)
 
 		if err != nil {
-			log.Printf("lookupVerificationStatusAny %s sha %s failed %v\n",
-				safename, sc.ImageSha256, err)
+			log.Printf("checkStorageVerifierStatus for %s, Verifier Status Map is absent %s sha %s %v\n",
+				key, safename, sc.ImageSha256, err)
 			continue
 		}
 		if minState > vs.State {
@@ -232,8 +229,8 @@ func checkStorageVerifierStatus(objType string, uuidStr string,
 		}
 		switch vs.State {
 		case types.INITIAL:
-			log.Printf("Received error from verifier for %s: %s\n",
-				safename, vs.LastErr)
+			log.Printf("checkStorageVerifierStatus for %s, verifier error verifier for %s: %s\n",
+				key, safename, vs.LastErr)
 			ss.Error = vs.LastErr
 			allErrors = appendError(allErrors, "verifier",
 				vs.LastErr)
@@ -243,8 +240,8 @@ func checkStorageVerifierStatus(objType string, uuidStr string,
 		default:
 			ss.ActiveFileLocation = objDownloadDirname + "/" + objType + "/" + vs.Safename
 
-			log.Printf("Update SSL ActiveFileLocation for %s: %s\n",
-				uuidStr, ss.ActiveFileLocation)
+			log.Printf("checkStorageVerifierStatus for %s, Update SSL ActiveFileLocation for %s: %s\n",
+				key, uuidStr, ss.ActiveFileLocation)
 			changed = true
 		}
 	}

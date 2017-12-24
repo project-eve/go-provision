@@ -4,9 +4,16 @@
 package types
 
 import (
+	"github.com/satori/go.uuid"
 	"log"
 	"time"
 )
+
+// UUID plus version
+type UUIDandVersion struct {
+	UUID    uuid.UUID
+	Version string
+}
 
 // top level config container
 type DeviceConfigResponse struct {
@@ -99,10 +106,9 @@ type EIDOverlayConfig struct {
 // - "ramdisk"
 // - "device_tree"
 type StorageConfig struct {
-	DownloadURL     string
-	MaxSize         uint   // In kbytes
-	TransportMethod string // Download method S3/HTTP/SFTP etc.
-	// XXX Add SignatureInfo for the sha256. Verifier should check.
+	DownloadURL      string
+	MaxSize          uint     // In kbytes
+	TransportMethod  string   // Download method S3/HTTP/SFTP etc.
 	CertificateChain []string //name of intermediate certificates
 	ImageSignature   []byte   //signature of image
 	SignatureKey     string   //certificate containing public key
@@ -116,7 +122,7 @@ type StorageConfig struct {
 	// boots (acivate/inactivate)
 	ObjType          string
 	DownloadObjDir   string
-	FinalObjDir      string
+	FinalObjDir      string // installation dir, may differ from verified
 	NeedVerification bool
 	Format           string // Default "raw"; could be raw, qcow, qcow2, vhd
 	Devtype          string // Default ""; could be e.g. "cdrom"
