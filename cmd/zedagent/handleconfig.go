@@ -121,8 +121,10 @@ func configTimerTask() {
 
 func getLatestConfigDigest(digestUrl string, configSha string, iteration int) *zconfig.EdgeDevConfList {
 
-	var requestDigest = &zconfig.EdgeDevConfList{}
 	var configPath string = ""
+
+	var requestDigest = &zconfig.EdgeDevConfList{}
+	requestDigest.Digest = make([]*zconfig.EdgeDevConfigDigest, 1)
 
 	digest := new(zconfig.EdgeDevConfigDigest)
 
