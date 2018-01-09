@@ -7,7 +7,12 @@ import (
 	"github.com/satori/go.uuid"
 	"log"
 	"net"
+	"os"
 	"strings"
+)
+
+const (
+	objectDownloadDirname = "/var/tmp/zedmanager/downloads"
 )
 
 // XXX rename to DeviceHwResources
@@ -124,4 +129,40 @@ func UrlToFilename(urlName string) string {
 	comp := strings.Split(urlName, "/")
 	last := comp[len(comp)-1]
 	return last
+}
+
+// create object download directories
+func CreateDownloadDirs(objTypes []string) {
+
+	workingDirTypes := []string{"/pending", "/verifier", "/verified"}
+
+	// now create the download dirs
+	for _, objType := range objTypes {
+		for _, workingDirType := range workingDirTypes {
+			dirName := objectDownloadDirname + "/" + objType + workingDirType
+			if _, err := os.Stat(dirName); err != nil {
+				if err := os.MkdirAll(dirName, 0700); err != nil {
+					log.Fatal(err)
+				}
+			}
+		}
+	}
+}
+
+// clear in-progress object download directories
+func ClearInProgressDownloadDirs(objTypes []string) {
+
+	inProgressDirTypes := []string{"/pending", "/verifier"}
+
+	// now create the download dirs
+	for _, objType := range objTypes {
+		for _, inProgressDirType := range inProgressDirTypes {
+			dirName := objectDownloadDirname + "/" + objType + inProgressDirType
+			if _, err := os.Stat(dirName); err == nil {
+				if err := os.RemoveAll(dirName); err != nil {
+					log.Fatal(err)
+				}
+			}
+		}
+	}
 }

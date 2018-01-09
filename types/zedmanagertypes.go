@@ -121,7 +121,6 @@ type StorageConfig struct {
 	Preserve    bool // If set a rw disk will be preserved across
 	// boots (acivate/inactivate)
 	ObjType          string
-	DownloadObjDir   string
 	FinalObjDir      string // installation dir, may differ from verified
 	NeedVerification bool
 	Format           string // Default "raw"; could be raw, qcow, qcow2, vhd
