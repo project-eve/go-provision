@@ -23,6 +23,13 @@ import (
 
 // Keeping status in /var/run to be clean after a crash/reboot
 const (
+	appImgObj                = "appImg.obj"
+	domainMgrModulename      = "domainmgr"
+	downloaderModulename     = "downloader"
+	idenityMgrModulename     = "idenitymgr"
+	zedmanagerModulename     = "zedmanager"
+	zedRoutererModulename    = "zedagent"
+	verifierModulename       = "verifier"
 	baseDirname              = "/var/tmp/zedmanager"
 	runDirname               = "/var/run/zedmanager"
 	zedmanagerConfigDirname  = baseDirname + "/config"
@@ -55,42 +62,31 @@ func main() {
 	watch.CleanupRestart("domainmgr")
 	watch.CleanupRestart("zedagent")
 
-	verifierStatusDirname := "/var/run/verifier/appImg.obj/status"
-	downloaderStatusDirname := "/var/run/downloader/appImg.obj/status"
+	verifierAppImgObjStatusDirname := "/var/run/verifier/appImg.obj/status"
+	downloaderAppImgObjStatusDirname := "/var/run/downloader/appImg.obj/status"
 	domainmgrStatusDirname := "/var/run/domainmgr/status"
 	zedrouterStatusDirname := "/var/run/zedrouter/status"
 	identitymgrStatusDirname := "/var/run/identitymgr/status"
 
-	dirs := []string{
-		zedmanagerConfigDirname,
-		zedmanagerStatusDirname,
-		identitymgrConfigDirname,
-		zedrouterConfigDirname,
-		domainmgrConfigDirname,
-		downloaderConfigDirname,
-		verifierConfigDirname,
-		identitymgrStatusDirname,
-		zedrouterStatusDirname,
-		domainmgrStatusDirname,
-		downloaderStatusDirname,
-		verifierStatusDirname,
-	}
+	// only handle opp image type objects
+	var noObjTypes []string
+	objTypes := []string{appImgObj}
 
-	for _, dir := range dirs {
-		if _, err := os.Stat(dir); err != nil {
-			if err := os.MkdirAll(dir, 0700); err != nil {
-				log.Fatal(err)
-			}
-		}
-	}
+	// create config/status dirs
+	watch.CreateConfigStatusDirs(domainMgrModulename, noObjTypes)
+	watch.CreateConfigStatusDirs(downloaderModulename, objTypes)
+	watch.CreateConfigStatusDirs(idenityMgrModulename, noObjTypes)
+	watch.CreateConfigStatusDirs(zedmanagerModulename, noObjTypes)
+	watch.CreateConfigStatusDirs(zedRoutererModulename, noObjTypes)
+	watch.CreateConfigStatusDirs(verifierModulename, objTypes)
 
 	// Tell ourselves to go ahead
 	watch.SignalRestart("zedmanager")
 
 	verifierChanges := make(chan string)
-	go watch.WatchStatus(verifierStatusDirname, verifierChanges)
+	go watch.WatchStatus(verifierAppImgObjStatusDirname, verifierChanges)
 	downloaderChanges := make(chan string)
-	go watch.WatchStatus(downloaderStatusDirname, downloaderChanges)
+	go watch.WatchStatus(downloaderAppImgObjStatusDirname, downloaderChanges)
 	identitymgrChanges := make(chan string)
 	go watch.WatchStatus(identitymgrStatusDirname, identitymgrChanges)
 	zedrouterChanges := make(chan string)
@@ -115,7 +111,7 @@ func main() {
 		case change := <-verifierChanges:
 			{
 				watch.HandleStatusEvent(change,
-					verifierStatusDirname,
+					verifierAppImgObjStatusDirname,
 					&types.VerifyImageStatus{},
 					handleVerifyImageStatusModify,
 					handleVerifyImageStatusDelete,
@@ -135,7 +131,7 @@ func main() {
 		case change := <-downloaderChanges:
 			{
 				watch.HandleStatusEvent(change,
-					downloaderStatusDirname,
+					downloaderAppImgObjStatusDirname,
 					&types.DownloaderStatus{},
 					handleDownloaderStatusModify,
 					handleDownloaderStatusDelete, nil)
@@ -144,7 +140,7 @@ func main() {
 		case change := <-verifierChanges:
 			{
 				watch.HandleStatusEvent(change,
-					verifierStatusDirname,
+					verifierAppImgObjStatusDirname,
 					&types.VerifyImageStatus{},
 					handleVerifyImageStatusModify,
 					handleVerifyImageStatusDelete,

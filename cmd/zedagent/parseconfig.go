@@ -447,45 +447,43 @@ func writeBaseOsStatus(baseOsStatus *types.BaseOsStatus,
 func getCertObjects(uuidAndVersion types.UUIDandVersion,
 	sha256 string, drives []types.StorageConfig) {
 
-	var idx int = 0
-
+	var cidx int = 0
 	for _, image := range drives {
-
 		if image.SignatureKey != "" {
-			idx++
+			cidx++
 		}
-
 		for _, certUrl := range image.CertificateChain {
 			if certUrl != "" {
-				idx++
+				cidx++
 			}
 		}
 	}
 
-	if idx == 0 {
+	if cidx == 0 {
 		return
 	}
 
 	var config = &types.CertObjConfig{}
-	var safename = types.UrlToSafename(uuidAndVersion.UUID.String(), sha256)
+	var certConfigFilename = uuidAndVersion.UUID.String()
 	var configFilename = fmt.Sprintf("%s/%s.json",
-		zedagentCertObjConfigDirname, safename)
+		zedagentCertObjConfigDirname, certConfigFilename)
 
 	config.UUIDandVersion = uuidAndVersion
 	config.ConfigSha256 = sha256
-	config.StorageConfigList = make([]types.StorageConfig, idx)
+	config.StorageConfigList = make([]types.StorageConfig, cidx)
 
+	cidx = 0
 	for _, image := range drives {
 
 		if image.SignatureKey != "" {
-			getCertObjConfig(*config, image, image.SignatureKey, idx)
-			idx++
+			getCertObjConfig(*config, image, image.SignatureKey, cidx)
+			cidx++
 		}
 
 		for _, certUrl := range image.CertificateChain {
 			if certUrl != "" {
-				getCertObjConfig(*config, image, certUrl, idx)
-				idx++
+				getCertObjConfig(*config, image, certUrl, cidx)
+				cidx++
 			}
 		}
 	}
@@ -516,7 +514,6 @@ func getCertObjConfig(config types.CertObjConfig,
 		ImageSha256:      "",
 		ObjType:          certObj,
 		NeedVerification: false,
-		DownloadObjDir:   certObjPendingDirname,
 		FinalObjDir:      certsDirname,
 	}
 	config.StorageConfigList[idx] = *drive
@@ -526,6 +523,7 @@ func validateBaseOsConfig(baseOsList []types.BaseOsConfig) bool {
 
 	var osCount, activateCount int
 
+	// not more than 2 base os config
 	if len(baseOsList) > 2 {
 		return false
 	}
@@ -539,6 +537,7 @@ func validateBaseOsConfig(baseOsList []types.BaseOsConfig) bool {
 		}
 	}
 
+	// can not be more than one activate as true
 	if osCount != 0 {
 		if activateCount != 1 {
 			return false
@@ -567,6 +566,8 @@ func writeCertObjConfig(config types.CertObjConfig, configFilename string) {
 	if err != nil {
 		log.Fatal(err, "json Marshal certObjConfig")
 	}
+
+	log.Printf("Writing CA config %s, %s\n", configFilename, bytes)
 
 	err = ioutil.WriteFile(configFilename, bytes, 0644)
 	if err != nil {

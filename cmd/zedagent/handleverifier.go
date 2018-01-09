@@ -76,11 +76,11 @@ func updateVerifierStatus(objType string, status *types.VerifyImageStatus) {
 	initVerifierMaps()
 
 	key := formLookupKey(objType, status.Safename)
-	log.Printf("updataVerifierStatus for %s\n", key)
+	log.Printf("updateVerifierStatus for %s\n", key)
 
 	// Ignore if any Pending* flag is set
 	if status.PendingAdd || status.PendingModify || status.PendingDelete {
-		log.Printf("updataVerifierStatus for %s, Skipping due to Pending*\n", key)
+		log.Printf("updateVerifierStatus for %s, Skipping due to Pending*\n", key)
 		return
 	}
 

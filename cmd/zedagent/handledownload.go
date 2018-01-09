@@ -45,7 +45,7 @@ func createDownloaderConfig(objType string, safename string,
 	log.Printf("createDownloaderConfig for %s\n", key)
 
 	if m, ok := downloaderConfigMap[key]; ok {
-		log.Printf("createDownloaderConfig for %s, Downloader config exists, refcount %d\n",
+		log.Printf("createDownloaderConfig for %s, exists, refcount %d\n",
 			key, m.RefCount)
 		m.RefCount += 1
 	} else {
@@ -59,7 +59,6 @@ func createDownloaderConfig(objType string, safename string,
 			Password:         sc.Password,
 			ImageSha256:      sc.ImageSha256,
 			ObjType:          objType,
-			DownloadObjDir:   objDownloadDirname + "/" + objType,
 			FinalObjDir:      sc.FinalObjDir,
 			NeedVerification: sc.NeedVerification,
 			RefCount:         1,
@@ -77,25 +76,27 @@ func createDownloaderConfig(objType string, safename string,
 
 func updateDownloaderStatus(objType string, status *types.DownloaderStatus) {
 
-	key := formLookupKey(objType, status.Safename)
-	log.Printf("updataDownloaderStatus for %s\n", key)
-
 	initDownloaderMaps()
+
+	key := formLookupKey(objType, status.Safename)
+	log.Printf("updateDownloaderStatus for %s, %v\n", key, status.State)
 
 	// Ignore if any Pending* flag is set
 	if status.PendingAdd || status.PendingModify || status.PendingDelete {
-		log.Printf("updataDownloaderStatus for %s, Skipping due to Pending*\n", key)
+		log.Printf("updateDownloaderStatus for %s, Skipping due to Pending*\n", key)
 		return
 	}
 
 	changed := false
 	if m, ok := downloaderStatusMap[key]; ok {
 		if status.State != m.State {
-			log.Printf("updareDownloaderStatus for %s, Downloader state changed from %v to %v\n", key, m.State, status.State)
+			log.Printf("Download state %s, state changed from %v to %v\n",
+				 key, m.State, status.State)
 			changed = true
 		}
 	} else {
-		log.Printf("updateDownloaderStatus for %s, Downloader map add for %v\n", key, status.State)
+		log.Printf("Downloader status map %s add, state %v\n",
+			key, status.State)
 		changed = true
 	}
 
@@ -108,10 +109,10 @@ func updateDownloaderStatus(objType string, status *types.DownloaderStatus) {
 			baseOsHandleStatusUpdateSafename(status.Safename)
 
 		case certObj:
-			certObjHandleStatusUpdate(status.Safename)
+			certObjHandleStatusUpdateSafename(status.Safename)
 
 		default:
-			log.Fatal("updateDownloaderStatus for %s, Unsupported objType <%s>\n",
+			log.Fatal("%s, unsupported objType <%s>\n",
 				status.Safename, objType)
 			return
 		}
@@ -174,7 +175,7 @@ func checkStorageDownloadStatus(objType string, uuidStr string,
 	config []types.StorageConfig, status []types.StorageStatus) (bool, types.SwState, string, time.Time) {
 
 	key := formLookupKey(objType, uuidStr)
-	log.Printf("checkStorageDownloaderStatus for %s\n", key)
+	log.Printf("checkStorageDownloadStatus for %s\n", key)
 
 	allErrors := ""
 	var errorTime time.Time
@@ -185,21 +186,23 @@ func checkStorageDownloadStatus(objType string, uuidStr string,
 	for i, sc := range config {
 
 		ss := &status[i]
+
 		safename := types.UrlToSafename(sc.DownloadURL, sc.ImageSha256)
 
-		fmt.Printf("checkStorageDownloaderStatus for %s, Found StorageConfig URL %s\n", 
-			key, sc.DownloadURL)
+		log.Printf("check Storage Download for %s\n", safename)
 
 		if sc.NeedVerification {
 			// Shortcut if image is already verified
-			vs, err := lookupVerificationStatusAny(objType, safename, sc.ImageSha256)
+			vs, err := lookupVerificationStatusAny(objType,
+							safename, sc.ImageSha256)
+
 			if err == nil && vs.State == types.DELIVERED {
-				log.Printf("checkStorageDownloaderStatus for %s, Found verified image sha %s\n",
-					key, sc.ImageSha256)
+				log.Printf("Verifier status for %s, Found verified object, sha %s\n",
+					sc.DownloadURL, sc.ImageSha256)
 				// If we don't already have a RefCount add one
 				if !ss.HasVerifierRef {
-					log.Printf("checkStorageDownloaderStatus for %s, !HasVerifierRef RefCount %d\n",
-						key, vs.RefCount)
+					log.Printf("Verifier Status for %s !HasVerifierRef, RefCount %d\n",
+						sc.DownloadURL, vs.RefCount)
 					vs.RefCount += 1
 					ss.HasVerifierRef = true
 					changed = true
@@ -216,7 +219,8 @@ func checkStorageDownloadStatus(objType string, uuidStr string,
 		}
 
 		if !ss.HasDownloaderRef {
-				log.Printf("checkStorageDownloaderStatus for %s, !HasDownloaderRef\n", key)
+				log.Printf("Download status for %s, !HasDownloaderRef\n",
+					sc.DownloadURL)
 			createDownloaderConfig(objType, safename, &sc)
 			ss.HasDownloaderRef = true
 			changed = true
@@ -224,10 +228,11 @@ func checkStorageDownloadStatus(objType string, uuidStr string,
 
 		ds, err := lookupDownloaderStatus(objType, safename)
 		if err != nil {
-			log.Printf("checkStorageDownloaderStatus for %s, Download Map absent %s \n",
-				key, err)
+			log.Printf("Download Status Map for %s, is absent %s \n",
+				safename, err)
 			continue
 		}
+
 		if minState > ds.State {
 			minState = ds.State
 		}
@@ -238,7 +243,7 @@ func checkStorageDownloadStatus(objType string, uuidStr string,
 
 		switch ds.State {
 		case types.INITIAL:
-			log.Printf("checkStorageDownloaderStatus for %s, Received error from downloader for %s\n",
+			log.Printf("Download Status Map for %s, Downloader error, %s\n",
 				key, ds.LastErr)
 			ss.Error = ds.LastErr
 			allErrors = appendError(allErrors, "downloader",
@@ -268,7 +273,7 @@ func installDownloadedObjects(objType string, uuidStr string,
 	config []types.StorageConfig, status []types.StorageStatus) {
 
 	key := formLookupKey(objType, uuidStr)
-	log.Printf("installDownloadedObjects for %s, %s\n",key)
+	log.Printf("installDownloadedObjects for %s\n", key)
 
 	for i, sc := range config {
 
@@ -279,9 +284,13 @@ func installDownloadedObjects(objType string, uuidStr string,
 		// if final installation directory is defined
 		// and the object is ready for installation
 		if sc.FinalObjDir != "" {
-			if sc.NeedVerification == false ||
+			if (sc.NeedVerification == false &&
+				ss.State == types.DOWNLOADED) ||
 				ss.State == types.DELIVERED {
-				installDownloadedObject(objType, safename, sc, ss)
+
+				if ret := installDownloadedObject(objType, safename, sc, ss); ret == true {
+					ss.State = types.INSTALLED
+				}
 			}
 		}
 	}
@@ -291,14 +300,14 @@ func installDownloadedObjects(objType string, uuidStr string,
 // the final installation directory is mentioned,
 // move the object there
 func installDownloadedObject(objType string, safename string,
-	config types.StorageConfig, status *types.StorageStatus) {
+	config types.StorageConfig, status *types.StorageStatus) bool {
 
 	var dstFilename string = config.FinalObjDir
-	var srcFilename string = config.DownloadObjDir
+	var srcFilename string = objDownloadDirname + "/" + objType
 
 	key := formLookupKey(objType, safename)
 
-	log.Printf("installDownloadedObject for %s\n", key)
+	log.Printf("installDownloadedObject for %s, %v\n", key, status.State)
 
 	// if the object is in downloaded state,
 	// pick from pending directory
@@ -308,13 +317,15 @@ func installDownloadedObject(objType string, safename string,
 
 	case types.DOWNLOADED:
 		srcFilename += "/pending/"
+		break
 
 	case types.DELIVERED:
 		srcFilename += "/verified/"
+		break
 
 	default:
-		log.Fatal("installDownloadedObject for %s, invalid state %d",key, status.State)
-		return
+		log.Printf("installDownloadedObject for %s, invalid state %d\n",key, status.State)
+		return false
 	}
 
 	if config.ImageSha256 != "" {
@@ -325,8 +336,8 @@ func installDownloadedObject(objType string, safename string,
 
 	// ensure the file is present
 	if _, err := os.Stat(srcFilename); err != nil {
-		log.Printf("installDownloadedObject for %s, %s file absent\n", key, srcFilename)
-		return
+		log.Printf("installDownloadedObject for %s, %s file absent(%s)\n", key, srcFilename, err)
+		return false
 	}
 
 	// create the destination directory
@@ -344,6 +355,7 @@ func installDownloadedObject(objType string, safename string,
 	os.Rename(srcFilename, dstFilename)
 	status.State = types.INSTALLED
 	log.Printf("installDownloadedObject for %s, Done\n", key)
+	return true
 }
 
 func writeDownloaderConfig(config types.DownloaderConfig, configFilename string) {

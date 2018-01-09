@@ -41,47 +41,31 @@ import (
 )
 
 const (
+	globalObj = ""
 	appImgObj = "appImg.obj"
 	baseOsObj = "baseOs.obj"
 	certObj   = "cert.obj"
 
+	moduleName = "downloader"
+
+	zedBaseDirname     = "/var/tmp"
+	zedRunDirname      = "/var/run"
 	baseDirname        = "/var/tmp/downloader"
 	runDirname         = "/var/run/downloader"
 	certsDirname       = "/var/tmp/zedmanager/certs"
-	objDownloadDirname = "/var/tmp/zedmanager/downloads"
+	objectDownloadDirname = "/var/tmp/zedmanager/downloads"
 
 	downloaderConfigDirname = baseDirname + "/config"
 	downloaderStatusDirname = runDirname + "/status"
 
-	appImgBaseDirname   = baseDirname + "/" + appImgObj
-	appImgRunDirname    = runDirname + "/" + appImgObj
-	appImgConfigDirname = appImgBaseDirname + "/config"
-	appImgStatusDirname = appImgRunDirname + "/status"
+	appImgConfigDirname = baseDirname + "/" + appImgObj + "/config"
+	appImgStatusDirname = runDirname + "/" + appImgObj + "/status"
 
-	baseOsBaseDirname   = baseDirname + "/" + baseOsObj
-	baseOsRunDirname    = runDirname + "/" + baseOsObj
-	baseOsConfigDirname = baseOsBaseDirname + "/config"
-	baseOsStatusDirname = baseOsRunDirname + "/status"
+	baseOsConfigDirname = baseDirname + "/" + baseOsObj + "/config"
+	baseOsStatusDirname = runDirname + "/" + baseOsObj + "/status"
 
-	certObjBaseDirname   = baseDirname + "/" + certObj
-	certObjRunDirname    = runDirname + "/" + certObj
-	certObjConfigDirname = certObjBaseDirname + "/config"
-	certObjStatusDirname = certObjRunDirname + "/status"
-
-	appImgCatalogDirname  = objDownloadDirname + "/" + appImgObj
-	appImgPendingDirname  = appImgCatalogDirname + "/pending"
-	appImgVerifierDirname = appImgCatalogDirname + "/verifier"
-	appImgVerifiedDirname = appImgCatalogDirname + "/verified"
-
-	baseOsCatalogDirname  = objDownloadDirname + "/" + baseOsObj
-	baseOsPendingDirname  = baseOsCatalogDirname + "/pending"
-	baseOsVerifierDirname = baseOsCatalogDirname + "/verifier"
-	baseOsVerifiedDirname = baseOsCatalogDirname + "/verified"
-
-	certObjCatalogDirname  = objDownloadDirname + "/" + certObj
-	certObjPendingDirname  = certObjCatalogDirname + "/pending"
-	certObjVerifierDirname = certObjCatalogDirname + "/verifier"
-	certObjVerifiedDirname = certObjCatalogDirname + "/verified"
+	certObjConfigDirname = baseDirname + "/" + certObj + "/config"
+	certObjStatusDirname = runDirname + "/" + certObj + "/status"
 )
 
 // XXX remove global variables
@@ -99,7 +83,7 @@ func main() {
 	versionPtr := flag.Bool("v", false, "Version")
 	flag.Parse()
 	if *versionPtr {
-		fmt.Printf("%s: %s\n", os.Args[0], Version)
+		log.Printf("%s: %s\n", os.Args[0], Version)
 		return
 	}
 	log.Printf("Starting downloader\n")
@@ -171,7 +155,7 @@ func handleObjectCreate(statusFilename string, configArg interface{}) {
 	switch configArg.(type) {
 
 	default:
-		log.Fatal("Can only handle DownloaderConfig")
+		log.Fatal("handleCreate: Can only handle DownloaderConfig")
 
 	case *types.DownloaderConfig:
 		config = configArg.(*types.DownloaderConfig)
@@ -189,7 +173,7 @@ func handleObjectModify(statusFilename string, configArg interface{},
 	switch configArg.(type) {
 
 	default:
-		log.Fatal("Can only handle DownloaderConfig")
+		log.Fatal("handleModify: Can only handle DownloaderConfig")
 
 	case *types.DownloaderConfig:
 		config = configArg.(*types.DownloaderConfig)
@@ -238,7 +222,6 @@ func handleCreate(config types.DownloaderConfig, statusFilename string) {
 		RefCount:         config.RefCount,
 		DownloadURL:      config.DownloadURL,
 		ImageSha256:      config.ImageSha256,
-		DownloadObjDir:   config.DownloadObjDir,
 		FinalObjDir:      config.FinalObjDir,
 		ObjType:          config.ObjType,
 		NeedVerification: config.NeedVerification,
@@ -293,7 +276,7 @@ func handleCreate(config types.DownloaderConfig, statusFilename string) {
 func handleModify(config types.DownloaderConfig,
 	status types.DownloaderStatus, statusFilename string) {
 
-	locDirname := config.DownloadObjDir
+	locDirname := objectDownloadDirname + "/" + config.ObjType
 	log.Printf("handleModify(%v) for %s\n",
 		config.Safename, config.DownloadURL)
 
@@ -391,7 +374,7 @@ func doDelete(statusFilename string, locDirname string,
 
 func handleDelete(status types.DownloaderStatus, statusFilename string) {
 
-	locDirname := status.DownloadObjDir
+	locDirname := objectDownloadDirname + "/" + status.ObjType
 
 	log.Printf("handleDelete(%v) for %s, %s\n",
 		status.Safename, status.DownloadURL, locDirname)
@@ -428,76 +411,7 @@ var globalStatusFilename string
 
 func downloaderInit() {
 
-	dirs := []string{
-		baseDirname,
-		runDirname,
-
-		downloaderConfigDirname,
-		downloaderStatusDirname,
-
-		appImgBaseDirname,
-		appImgRunDirname,
-		appImgConfigDirname,
-		appImgStatusDirname,
-
-		certObjBaseDirname,
-		certObjRunDirname,
-		certObjConfigDirname,
-		certObjStatusDirname,
-
-		baseOsBaseDirname,
-		baseOsRunDirname,
-		baseOsConfigDirname,
-		baseOsStatusDirname,
-
-		objDownloadDirname,
-
-		appImgCatalogDirname,
-		appImgPendingDirname,
-		appImgVerifierDirname,
-		appImgVerifiedDirname,
-
-		baseOsCatalogDirname,
-		baseOsPendingDirname,
-		baseOsVerifierDirname,
-		baseOsVerifiedDirname,
-
-		certObjCatalogDirname,
-		certObjPendingDirname,
-		certObjVerifierDirname,
-		certObjVerifiedDirname,
-
-		certsDirname,
-	}
-
-	workInProgressDirs := []string{
-		appImgPendingDirname,
-		appImgVerifierDirname,
-		baseOsPendingDirname,
-		baseOsVerifierDirname,
-		certObjPendingDirname,
-		certObjVerifierDirname,
-	}
-
-	// Remove any files which didn't make it past the verifier.
-	// Though verifier owns it, remove them for calculating the
-	// total available space
-	for _, dir := range workInProgressDirs {
-		if _, err := os.Stat(dir); err == nil {
-			if err := os.Remove(dir); err != nil {
-				log.Fatal(err)
-			}
-		}
-	}
-
-	// now create the dirs
-	for _, dir := range dirs {
-		if _, err := os.Stat(dir); err != nil {
-			if err := os.MkdirAll(dir, 0700); err != nil {
-				log.Fatal(err)
-			}
-		}
-	}
+	initializeDirs()
 
 	// now start
 	configFilename := downloaderConfigDirname + "/global"
@@ -528,7 +442,7 @@ func downloaderInit() {
 	// XXX how do we find out when verifier cleans up duplicates etc?
 	// We read /var/tmp/zedmanager/downloads/* and determine how much space
 	// is used. Place in GlobalDownloadStatus. Calculate remaining space.
-	totalUsed := sizeFromDir(objDownloadDirname)
+	totalUsed := sizeFromDir(objectDownloadDirname)
 	globalStatus.UsedSpace = uint((totalUsed + 1023) / 1024)
 	updateRemainingSpace()
 
@@ -543,6 +457,28 @@ func downloaderInit() {
 	dCtx = ctx
 }
 
+func initializeDirs() {
+
+	objTypes := []string{appImgObj, baseOsObj, certObj}
+
+	if _, err := os.Stat(certsDirname); err != nil {
+		if err := os.MkdirAll(certsDirname, 0700); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	// Remove any files which didn't make it past the verifier.
+	// Though verifier owns it, remove them for calculating the
+	// total available space
+	types.ClearInProgressDownloadDirs(objTypes)
+
+	// create the object based config/status dirs
+	watch.CreateConfigStatusDirs(moduleName, objTypes)
+
+	// create the object download directories
+	types.CreateDownloadDirs(objTypes)
+}
+
 func sizeFromDir(dirname string) int64 {
 	var totalUsed int64 = 0
 	locations, err := ioutil.ReadDir(dirname)
@@ -554,7 +490,7 @@ func sizeFromDir(dirname string) int64 {
 		log.Printf("Looking in %s\n", filename)
 		if location.IsDir() {
 			size := sizeFromDir(filename)
-			fmt.Printf("Dir %s size %d\n", filename, size)
+			log.Printf("Dir %s size %d\n", filename, size)
 			totalUsed += size
 		} else {
 			log.Printf("File %s Size %d\n", filename, location.Size())
@@ -664,11 +600,7 @@ func handleSyncOp(syncOp zedUpload.SyncOpType,
 	var err error
 	var locFilename string
 
-	locDirname := appImgCatalogDirname
-
-	if config.DownloadObjDir != "" {
-		locDirname = config.DownloadObjDir
-	}
+	locDirname := objectDownloadDirname + "/" + config.ObjType
 	locFilename = locDirname + "/pending"
 
 	// update status to DOWNLOAD STARTED
@@ -711,7 +643,8 @@ func handleSyncOp(syncOp zedUpload.SyncOpType,
 			if err == nil && dEndPoint != nil {
 				var respChan = make(chan *zedUpload.DronaRequest)
 
-				log.Printf("syncOp for <%s>/<%s>\n", config.Dpath, filename)
+				log.Printf("syncOp for <%s>/<%s> to %s\n", config.Dpath,
+					filename, locFilename)
 
 				// create Request
 				req := dEndPoint.NewRequest(syncOp, filename, locFilename,
@@ -747,10 +680,7 @@ func handleSyncOpResponse(config types.DownloaderConfig,
 	status *types.DownloaderStatus, statusFilename string,
 	err error) {
 
-	locDirname := appImgCatalogDirname
-	if config.DownloadObjDir != "" {
-		locDirname = config.DownloadObjDir
-	}
+	locDirname := objectDownloadDirname + "/" + config.ObjType
 
 	if err != nil {
 		// Delete file

@@ -27,6 +27,7 @@ import (
 
 // Keeping status in /var/run to be clean after a crash/reboot
 const (
+	moduleName = "zedrouter"
 	runDirname = "/var/run/zedrouter"
 	baseDirname = "/var/tmp/zedrouter"
 	configDirname = baseDirname + "/config"
@@ -48,32 +49,15 @@ func main() {
 	log.Printf("Starting zedrouter\n")
 	watch.CleanupRestarted("zedrouter")
 
-	if _, err := os.Stat(baseDirname); err != nil {
-		if err := os.Mkdir(baseDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-	if _, err := os.Stat(configDirname); err != nil {
-		if err := os.Mkdir(configDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-	if _, err := os.Stat(runDirname); err != nil {
-		if err := os.Mkdir(runDirname, 0755); err != nil {
-			log.Fatal(err)
-		}
-	} else {
-		// dnsmasq needs to read as nobody
-		if err := os.Chmod(runDirname, 0755); err != nil {
-			log.Fatal(err)
-		}
+	// create config/status dirs
+	var noObjTypes []string
+	watch.CreateConfigStatusDirs(moduleName, noObjTypes)
+
+	// dnsmasq needs to read as nobody
+	if err := os.Chmod(runDirname, 0755); err != nil {
+		log.Fatal(err)
 	}
 
-	if _, err := os.Stat(statusDirname); err != nil {
-		if err := os.Mkdir(statusDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
 	appNumAllocatorInit(statusDirname, configDirname)
 
 	handleInit(configDirname+"/global", statusDirname+"/global", runDirname)

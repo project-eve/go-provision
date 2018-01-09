@@ -43,13 +43,20 @@ import (
 
 // Keeping status in /var/run to be clean after a crash/reboot
 const (
+	globalObj = ""
 	appImgObj = "appImg.obj"
 	baseOsObj = "baseOs.obj"
 	certObj   = "cert.obj"
 
+	downloaderModulename = "downloader"
+	verifierModulename = "verifier"
 	zedagentModulename = "zedagent"
-	baseDirname        = "/var/tmp/" + zedagentModulename
-	runDirname         = "/var/run/" + zedagentModulename
+	zedmanagerModulename = "zedmanager"
+
+	zedBaseDirname     = "/var/tmp"
+	zedRunDirname      = "/var/run"
+	baseDirname        = "/var/tmp/zedagent"
+	runDirname         = "/var/run/zedagent"
 	objDownloadDirname = "/var/tmp/zedmanager/downloads"
 	certsDirname       = "/var/tmp/zedmanager/certs"
 
@@ -74,34 +81,20 @@ const (
 	zedagentCertObjStatusDirname = runDirname + "/" + certObj + "/status"
 
 	// base os download config/status holder
-	downloaderBaseOsConfigDirname = downloaderBaseDirname + "/" + baseOsObj + "/config"
 	downloaderBaseOsStatusDirname = downloaderRunDirname + "/" + baseOsObj + "/status"
-
-	// certificate download config/status holder
-	downloaderCertObjConfigDirname = downloaderBaseDirname + "/" + certObj + "/config"
 	downloaderCertObjStatusDirname = downloaderRunDirname + "/" + certObj + "/status"
 
-	// base os verifier config/status holder
-	verifierBaseOsConfigDirname = verifierBaseDirname + "/" + baseOsObj + "/config"
 	verifierBaseOsStatusDirname = verifierRunDirname + "/" + baseOsObj + "/status"
-
-	// base os object holder
-	baseOsCatalogDirname  = objDownloadDirname + "/" + baseOsObj
-	baseOsPendingDirname  = baseOsCatalogDirname + "/pending"
-	baseOsVerifierDirname = baseOsCatalogDirname + "/verifier"
-	baseOsVerifiedDirname = baseOsCatalogDirname + "/verified"
-
-	// cerificate object holder
-	certObjCatalogDirname  = objDownloadDirname + "/" + certObj
-	certObjPendingDirname  = certObjCatalogDirname + "/pending"
-	certObjVerifierDirname = certObjCatalogDirname + "/verifier"
-	certObjVerifiedDirname = certObjCatalogDirname + "/verified"
+	certObjPendingDirname = objDownloadDirname + "/" + certObj + "/pending"
 )
+
+var verifierRestarted = false
 
 // Set from Makefile
 var Version = "No version specified"
 
 func main() {
+
 	log.SetOutput(os.Stdout)
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.LUTC)
 	versionPtr := flag.Bool("v", false, "Version")
@@ -111,53 +104,18 @@ func main() {
 		return
 	}
 	log.Printf("Starting zedagent\n")
+
 	watch.CleanupRestarted("zedagent")
-
-	dirs := []string{
-
-		baseDirname,
-		runDirname,
-		objDownloadDirname,
-
-		zedagentConfigDirname,
-		zedagentStatusDirname,
-
-		zedmanagerConfigDirname,
-		zedmanagerStatusDirname,
-
-		zedagentBaseOsConfigDirname,
-		zedagentBaseOsStatusDirname,
-
-		zedagentCertObjConfigDirname,
-		zedagentCertObjStatusDirname,
-
-		downloaderBaseOsConfigDirname,
-		downloaderBaseOsStatusDirname,
-
-		downloaderCertObjConfigDirname,
-		downloaderCertObjStatusDirname,
-
-		verifierBaseOsConfigDirname,
-		verifierBaseOsStatusDirname,
-	}
-
-	for _, dir := range dirs {
-		if _, err := os.Stat(dir); err != nil {
-			if err := os.MkdirAll(dir, 0700); err != nil {
-				log.Fatal(err)
-			}
-		}
-	}
-
-	// Tell ourselves to go ahead
 	watch.SignalRestart("zedagent")
 
-	initMaps()
+	// Tell ourselves to go ahead
+	// initialize the module specifig stuff
+	handleInit()
 
-	getCloudUrls()
-	go metricsTimerTask()
-	go configTimerTask()
+	var restartFn watch.ConfigRestartHandler = handleRestart
+	var verifierRestartedFn watch.StatusRestartHandler = handleVerifierRestarted
 
+	fileChanges := make(chan string)
 	appInstanceStatusChanges := make(chan string)
 	baseOsConfigStatusChanges := make(chan string)
 	baseOsDownloaderChanges := make(chan string)
@@ -165,6 +123,32 @@ func main() {
 	certObjConfigStatusChanges := make(chan string)
 	certObjDownloaderChanges := make(chan string)
 
+	// First we process the verifierStatus to avoid downloading
+	// an base image we already have in place
+	log.Printf("Handling initial verifier Status\n")
+	done := false
+	for !done {
+		select {
+		case change := <-baseOsVerifierChanges:
+			{
+				watch.HandleStatusEvent(change,
+					verifierBaseOsStatusDirname,
+					&types.VerifyImageStatus{},
+					handleBaseOsVerifierStatusModify,
+					handleBaseOsVerifierStatusDelete,
+					&verifierRestartedFn)
+				if verifierRestarted {
+					log.Printf("Verifier reported restarted\n")
+					done = true
+					break
+				}
+			}
+		}
+	}
+
+	// start the metrics/config fetch tasks
+	go metricsTimerTask()
+	go configTimerTask()
 	// app instance status event watcher
 	go watch.WatchConfigStatus(zedmanagerConfigDirname,
 		zedmanagerStatusDirname, appInstanceStatusChanges)
@@ -189,8 +173,24 @@ func main() {
 	go watch.WatchStatus(downloaderCertObjStatusDirname,
 		certObjDownloaderChanges)
 
+	// for restart flag handling
+	go watch.WatchConfigStatus(zedagentConfigDirname,
+		 zedagentStatusDirname, fileChanges)
+
 	for {
 		select {
+
+		case change := <-fileChanges:
+			{
+				// restart only, handling place holder
+				watch.HandleConfigStatusEvent(change,
+					zedagentConfigDirname, zedagentStatusDirname,
+					&types.AppInstanceConfig{},
+					&types.AppInstanceStatus{},
+					handleAppInstanceStatusCreate,
+					handleAppInstanceStatusModify,
+					handleAppInstanceStatusDelete, &restartFn)
+			}
 
 		case change := <-appInstanceStatusChanges:
 			{
@@ -221,8 +221,8 @@ func main() {
 		case change := <-certObjConfigStatusChanges:
 			{
 				go watch.HandleConfigStatusEvent(change,
-					zedagentBaseOsConfigDirname,
-					zedagentBaseOsStatusDirname,
+					zedagentCertObjConfigDirname,
+					zedagentCertObjStatusDirname,
 					&types.CertObjConfig{},
 					&types.CertObjStatus{},
 					handleCertObjCreate,
@@ -264,6 +264,42 @@ func main() {
 	}
 }
 
+// signal zedmanager, to restart
+// it would take care of orchestrating
+// all other module restart
+func handleRestart(done bool) {
+	log.Printf("handleRestart(%v)\n", done)
+	if done {
+		watch.SignalRestart("zedmanager")
+	}
+}
+
+func handleVerifierRestarted(done bool) {
+	log.Printf("handleVerifierRestarted(%v)\n", done)
+	if done {
+		verifierRestarted = true
+	}
+}
+
+func handleInit() {
+
+	initializeDirs()
+	initMaps()
+	getCloudUrls()
+}
+
+func initializeDirs() {
+
+	zedagentObjTypes := []string{baseOsObj, certObj}
+	zedmanagerObjTypes := []string{appImgObj}
+
+	// create the module object based config/status dirs
+	watch.CreateConfigStatusDirs(downloaderModulename, zedagentObjTypes)
+	watch.CreateConfigStatusDirs(zedagentModulename, zedagentObjTypes)
+	watch.CreateConfigStatusDirs(zedmanagerModulename, zedmanagerObjTypes)
+	watch.CreateConfigStatusDirs(verifierModulename, zedagentObjTypes)
+}
+
 // app instance event watch to capture tranisions
 // and publish to zedCloud
 
@@ -278,7 +314,7 @@ func handleAppInstanceStatusCreate(statusFilename string,
 	case *types.AppInstanceConfig:
 		config = configArg.(*types.AppInstanceConfig)
 	}
-	log.Printf("handleCreate for %s\n", config.DisplayName)
+	log.Printf("handleAppInstanceStatusCreate for %s\n", config.DisplayName)
 }
 
 func handleAppInstanceStatusModify(statusFilename string,
