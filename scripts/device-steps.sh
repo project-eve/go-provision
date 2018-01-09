@@ -34,10 +34,10 @@ echo "Configuration from factory/install:"
 (cd $ETCDIR; ls -l)
 echo
 
-#echo "Update version info in $ETCDIR/version"
+echo "Update version info in $ETCDIR/version"
 cat $ETCDIR/version_tag >$ETCDIR/version
 for AGENT in $ALLAGENTS; do
-#    $BINDIR/$AGENT -v >>$ETCDIR/version
+    $BINDIR/$AGENT -v >>$ETCDIR/version
 done
 
 echo "Combined version:"
