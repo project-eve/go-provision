@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -28,6 +29,7 @@ const (
 	configTickTimeout   = 1       // in minutes
 )
 
+var digestApi string = "api/v1/edgedevice/config"
 var configApi string = "api/v1/edgedevice/config"
 var statusApi string = "api/v1/edgedevice/info"
 var metricsApi string = "api/v1/edgedevice/metrics"
@@ -36,6 +38,7 @@ var metricsApi string = "api/v1/edgedevice/metrics"
 // XXX shouldn't we know our own deviceId?
 var deviceId string
 // These URLs are effectively constants; depends on the server name
+var digestUrl string
 var configUrl string
 var metricsUrl string
 var statusUrl string
@@ -60,6 +63,7 @@ func getCloudUrls() {
 	strTrim := strings.TrimSpace(string(bytes))
 	serverName := strings.Split(strTrim, ":")[0]
 
+	digestUrl = serverName + "/" + digestApi
 	configUrl = serverName + "/" + configApi
 	statusUrl = serverName + "/" + statusApi
 	metricsUrl = serverName + "/" + metricsApi
@@ -97,9 +101,14 @@ func getCloudUrls() {
 // for each of the above buckets
 
 func configTimerTask() {
-	iteration := 0     
+	iteration := 0
+	var configSha string
 	fmt.Println("starting config fetch timer task")
-	getLatestConfig(configUrl, iteration)
+	ret := getLatestConfigDigest(digestUrl, configSha, iteration)
+
+	if ret != nil {
+		configSha = string(ret.Digest[0].ConfigSha256)
+	}
 
 	ticker := time.NewTicker(time.Minute * configTickTimeout)
 
@@ -108,6 +117,74 @@ func configTimerTask() {
 		iteration += 1
 		getLatestConfig(configUrl, iteration)
 	}
+}
+
+func getLatestConfigDigest(digestUrl string, configSha string, iteration int) *zconfig.EdgeDevConfList {
+
+	var requestDigest = &zconfig.EdgeDevConfList{}
+	var configPath string = ""
+
+	digest := new(zconfig.EdgeDevConfigDigest)
+
+	digest.ConfigPath   = []byte(configPath)
+	digest.ConfigSha256 = []byte(configSha)
+	requestDigest.Digest[0] = digest
+
+	data, err := proto.Marshal(requestDigest)
+	if err != nil {
+		fmt.Println("marshaling error: ", err)
+		return nil
+	}
+
+	intf, err := types.GetUplinkAny(globalConfig, globalStatus, iteration)
+	if err != nil {
+		log.Fatal(err)
+	}
+	addrCount := types.CountLocalAddrAny(globalConfig, globalStatus, intf)
+	// XXX makes logfile too long; debug flag?
+	log.Printf("Connecting to %s using intf %s interation %d #sources %d\n",
+		digestUrl, intf, iteration, addrCount)
+	for retryCount := 0; retryCount < addrCount; retryCount += 1 {
+		localAddr, err := types.GetLocalAddrAny(globalConfig,
+			globalStatus, retryCount, intf)
+		if err != nil {
+			log.Fatal(err)
+		}
+		localTCPAddr := net.TCPAddr{IP: localAddr}
+		// XXX makes logfile too long; debug flag?
+		fmt.Printf("Connecting to %s using intf %s source %v\n",
+			configUrl, intf, localTCPAddr)
+		d := net.Dialer{LocalAddr: &localTCPAddr}
+		transport := &http.Transport{
+			TLSClientConfig: tlsConfig,
+			Dial:            d.Dial,
+		}
+		client := &http.Client{Transport: transport}
+
+		resp, err := client.Post("https://" + digestUrl,
+				"application/x-proto-binary",
+				bytes.NewBuffer(data))
+		if err != nil {
+			log.Printf("URL get fail: %v\n", err)
+			continue
+		}
+		defer resp.Body.Close()
+		if err := validateConfigDigestMessage(resp); err != nil {
+			log.Println("validateConfigMessage: ", err)
+			return nil
+		}
+		configDigest, err := readDeviceConfigDigestProtoMessage(resp)
+		if err != nil {
+			log.Println("readDeviceConfigDigestProtoMessage: ", err)
+			return nil
+		}
+		// XXX:FIXME, implement the diff-logic, here
+		inhaleDeviceConfig(configDigest.Config)
+		return configDigest
+	}
+	log.Printf("All attempts to connect to %s using intf %s failed\n",
+		digestUrl, intf)
+	return nil
 }
 
 // Each iteration we try a different uplink. For each uplink we try all
@@ -160,6 +237,38 @@ func getLatestConfig(configUrl string, iteration int) {
 		configUrl, intf)
 }
 
+func validateConfigDigestMessage(r *http.Response) error {
+
+	var ctTypeStr = "Content-Type"
+	var ctTypeProtoStr = "application/x-proto-binary"
+
+	switch r.StatusCode {
+	case http.StatusOK:
+		fmt.Printf("validateConfigMessage StatusOK\n")
+	default:
+		fmt.Printf("validateConfigMessage statuscode %d %s\n",
+			r.StatusCode, http.StatusText(r.StatusCode))
+		fmt.Printf("received response %v\n", r)
+		return fmt.Errorf("http status %d %s",
+			r.StatusCode, http.StatusText(r.StatusCode))
+	}
+	ct := r.Header.Get(ctTypeStr)
+	if ct == "" {
+		return fmt.Errorf("No content-type")
+	}
+	mimeType, _, err := mime.ParseMediaType(ct)
+	if err != nil {
+		return fmt.Errorf("Get Content-type error")
+	}
+	switch mimeType {
+	case ctTypeProtoStr:
+		return nil
+	default:
+		return fmt.Errorf("Content-type %s not supported",
+			mimeType)
+	}
+}
+
 func validateConfigMessage(r *http.Response) error {
 
 	var ctTypeStr = "Content-Type"
@@ -190,6 +299,25 @@ func validateConfigMessage(r *http.Response) error {
 		return fmt.Errorf("Content-type %s not supported",
 			mimeType)
 	}
+}
+
+func readDeviceConfigDigestProtoMessage(r *http.Response) (*zconfig.EdgeDevConfList, error) {
+
+	var configDigest = &zconfig.EdgeDevConfList{}
+
+	bytes, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		fmt.Println(err)
+		return nil, err
+	}
+	//log.Println(" proto bytes(config) received from cloud: ", fmt.Sprintf("%s",bytes))
+	log.Printf("parsing proto %d bytes\n", len(bytes))
+	err = proto.Unmarshal(bytes, configDigest)
+	if err != nil {
+		log.Println("Unmarshalling failed: %v", err)
+		return nil, err
+	}
+	return configDigest, nil
 }
 
 func readDeviceConfigProtoMessage(r *http.Response) (*zconfig.EdgeDevConfig, error) {
