@@ -62,11 +62,12 @@ func main() {
 	watch.CleanupRestart("domainmgr")
 	watch.CleanupRestart("zedagent")
 
-	verifierAppImgObjStatusDirname := "/var/run/verifier/appImg.obj/status"
-	downloaderAppImgObjStatusDirname := "/var/run/downloader/appImg.obj/status"
+	verifierStatusDirname := "/var/run/verifier/status"
 	domainmgrStatusDirname := "/var/run/domainmgr/status"
 	zedrouterStatusDirname := "/var/run/zedrouter/status"
 	identitymgrStatusDirname := "/var/run/identitymgr/status"
+	verifierAppImgObjStatusDirname := "/var/run/verifier/appImg.obj/status"
+	downloaderAppImgObjStatusDirname := "/var/run/downloader/appImg.obj/status"
 
 	// only handle opp image type objects
 	var noObjTypes []string
@@ -83,6 +84,8 @@ func main() {
 	// Tell ourselves to go ahead
 	watch.SignalRestart("zedmanager")
 
+	verifierRestartChanges := make(chan string)
+	go watch.WatchStatus(verifierStatusDirname, verifierRestartChanges)
 	verifierChanges := make(chan string)
 	go watch.WatchStatus(verifierAppImgObjStatusDirname, verifierChanges)
 	downloaderChanges := make(chan string)
@@ -108,10 +111,10 @@ func main() {
 	done := false
 	for !done {
 		select {
-		case change := <-verifierChanges:
+		case change := <-verifierRestartChanges:
 			{
 				watch.HandleStatusEvent(change,
-					verifierAppImgObjStatusDirname,
+					verifierStatusDirname,
 					&types.VerifyImageStatus{},
 					handleVerifyImageStatusModify,
 					handleVerifyImageStatusDelete,
@@ -128,6 +131,16 @@ func main() {
 	log.Printf("Handling all inputs\n")
 	for {
 		select {
+		case change := <-verifierRestartChanges:
+			{
+				watch.HandleStatusEvent(change,
+					verifierStatusDirname,
+					&types.VerifyImageStatus{},
+					handleVerifyImageStatusModify,
+					handleVerifyImageStatusDelete,
+					&verifierRestartedFn)
+				continue
+			}
 		case change := <-downloaderChanges:
 			{
 				watch.HandleStatusEvent(change,

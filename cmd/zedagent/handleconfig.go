@@ -175,7 +175,7 @@ func readDeviceConfigProtoMessage(r *http.Response) (*zconfig.EdgeDevConfig, err
 		fmt.Println(err)
 		return nil, err
 	}
-	//log.Println(" proto bytes(config) received from cloud: ", fmt.Sprintf("%s",bytes))
+
 	log.Printf("parsing proto %d bytes\n", len(bytes))
 	err = proto.Unmarshal(bytes, config)
 	if err != nil {
@@ -204,6 +204,55 @@ func publishDeviceConfig(config *zconfig.EdgeDevConfig) {
 	}
 
 	handleLookUpParam(config)
+
+	// delete old app configs, if any
+	checkCurrentAppFiles(config)
+
+	// delete old baseOs configs, if any
+	checkCurrentBaseOsFiles(config)
+
+	// handle any new baseOs/App config
+	parseConfig(config)
+}
+
+func checkCurrentBaseOsFiles(config *zconfig.EdgeDevConfig) {
+
+	// get the current set of baseOs files
+	curBaseOsFilenames, err := ioutil.ReadDir(zedagentBaseOsConfigDirname)
+
+	if err != nil {
+		log.Printf("read dir %s fail, err: %v\n", zedagentBaseOsConfigDirname, err)
+		curBaseOsFilenames = nil
+	}
+
+	baseOses := config.GetBase()
+	// delete any baseOs config which is not present in the new set
+	for _, curBaseOs := range curBaseOsFilenames {
+		curBaseOsFilename := curBaseOs.Name()
+
+		// file type json
+		if strings.HasSuffix(curBaseOsFilename, ".json") {
+			found := false
+			for _, baseOs := range baseOses {
+				baseOsFilename := baseOs.Uuidandversion.Uuid + ".json"
+				if baseOsFilename == curBaseOsFilename {
+					found = true
+					break
+				}
+			}
+			// baseOS instance not found, delete
+			if !found {
+				log.Printf("Remove baseOs config %s\n", curBaseOsFilename)
+				err := os.Remove(zedagentBaseOsConfigDirname + "/" + curBaseOsFilename)
+				if err != nil {
+					log.Println("Old config: ", err)
+				}
+			}
+		}
+	}
+}
+
+func checkCurrentAppFiles(config *zconfig.EdgeDevConfig) {
 
 	// get the current set of App files
 	curAppFilenames, err := ioutil.ReadDir(zedmanagerConfigDirname)
@@ -238,6 +287,4 @@ func publishDeviceConfig(config *zconfig.EdgeDevConfig) {
 			}
 		}
 	}
-	// add new App instances
-	parseConfig(config)
 }

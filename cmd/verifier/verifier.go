@@ -278,6 +278,7 @@ func verifyObjectSha(config *types.VerifyImageConfig,
 		log.Printf("Sha validation failed for %s\n", config.DownloadURL)
 		return false
 	}
+	log.Printf("Sha validation successful for %s\n", config.DownloadURL)
 
 	if cerr := verifyObjectShaSignature(status, config, imageHash); cerr != "" {
 		updateVerifyErrStatus(status, cerr, statusFilename)
