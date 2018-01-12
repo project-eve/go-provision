@@ -115,7 +115,10 @@ func configTimerTask() {
 	for t := range ticker.C {
 		fmt.Println(t)
 		iteration += 1
-		getLatestConfig(configUrl, iteration)
+		ret := getLatestConfigDigest(digestUrl, configSha, iteration)
+		if ret != nil {
+			configSha = string(ret.Digest[0].ConfigSha256)
+		}
 	}
 }
 
@@ -128,6 +131,7 @@ func getLatestConfigDigest(digestUrl string, configSha string, iteration int) *z
 
 	digest := new(zconfig.EdgeDevConfigDigest)
 
+	// only one root level config sha for now
 	digest.ConfigPath   = []byte(configPath)
 	digest.ConfigSha256 = []byte(configSha)
 	requestDigest.Digest[0] = digest
@@ -172,7 +176,7 @@ func getLatestConfigDigest(digestUrl string, configSha string, iteration int) *z
 		}
 		defer resp.Body.Close()
 		if err := validateConfigDigestMessage(resp); err != nil {
-			log.Println("validateConfigMessage: ", err)
+			log.Println("validateConfigDigestMessage: ", err)
 			return nil
 		}
 		configDigest, err := readDeviceConfigDigestProtoMessage(resp)
@@ -246,9 +250,9 @@ func validateConfigDigestMessage(r *http.Response) error {
 
 	switch r.StatusCode {
 	case http.StatusOK:
-		fmt.Printf("validateConfigMessage StatusOK\n")
+		fmt.Printf("validateConfigDigestMessage StatusOK\n")
 	default:
-		fmt.Printf("validateConfigMessage statuscode %d %s\n",
+		fmt.Printf("validateConfigDigestMessage statuscode %d %s\n",
 			r.StatusCode, http.StatusText(r.StatusCode))
 		fmt.Printf("received response %v\n", r)
 		return fmt.Errorf("http status %d %s",
