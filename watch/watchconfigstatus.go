@@ -178,7 +178,6 @@ func CreateConfigStatusDirs(moduleName string, objTypes []string) {
 	for idx, baseDir := range baseDirs {
 
 		dirName := baseDir + jobDirs[idx]
-
 		if _, err := os.Stat(dirName); err != nil {
 			if err := os.MkdirAll(dirName, 0700); err != nil {
 				log.Fatal(err)
@@ -195,4 +194,3 @@ func CreateConfigStatusDirs(moduleName string, objTypes []string) {
 		}
 	}
 }
-

@@ -22,12 +22,12 @@ var certObjStatusMap map[string]types.CertObjStatus
 func initCertObjMaps() {
 
 	if certObjConfigMap == nil {
-		fmt.Printf("create certObjConfig map\n")
+		log.Printf("create certObjConfig map\n")
 		certObjConfigMap = make(map[string]types.CertObjConfig)
 	}
 
 	if certObjStatusMap == nil {
-		fmt.Printf("create certObjStatus map\n")
+		log.Printf("create certObjStatus map\n")
 		certObjStatusMap = make(map[string]types.CertObjStatus)
 	}
 }
@@ -62,11 +62,11 @@ func addOrUpdateCertObjConfig(uuidStr string, config types.CertObjConfig) {
 	if m, ok := certObjConfigMap[uuidStr]; ok {
 		// XXX or just compare version like elsewhere?
 		if !reflect.DeepEqual(m, config) {
-			fmt.Printf("addOrUpdateCertObjConfig for %s, Config change\n", uuidStr)
+			log.Printf("addOrUpdateCertObjConfig for %s, Config change\n", uuidStr)
 			changed = true
 		}
 	} else {
-		fmt.Printf("addOrUpdateCertObjConfig for %s, Config add\n", uuidStr)
+		log.Printf("addOrUpdateCertObjConfig for %s, Config add\n", uuidStr)
 		added = true
 		changed = true
 	}
@@ -290,7 +290,7 @@ func doCertObjUninstall(uuidStr string, status *types.CertObjStatus) (bool, bool
 
 		ss := &status.StorageStatusList[i]
 		safename := types.UrlToSafename(ss.DownloadURL, ss.ImageSha256)
-		fmt.Printf("doCertObjUninstall for %s, Found StorageStatus safename %s\n", uuidStr, safename)
+		log.Printf("doCertObjUninstall for %s, Found StorageStatus safename %s\n", uuidStr, safename)
 		// Decrease refcount if we had increased it
 		if ss.HasDownloaderRef {
 			removeCertObjDownloaderConfig(safename)

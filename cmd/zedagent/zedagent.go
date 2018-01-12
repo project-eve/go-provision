@@ -113,7 +113,6 @@ func main() {
 	handleInit()
 
 	var restartFn watch.ConfigRestartHandler = handleRestart
-	var verifierRestartedFn watch.StatusRestartHandler = handleVerifierRestarted
 
 	fileChanges := make(chan string)
 	appInstanceStatusChanges := make(chan string)
@@ -123,6 +122,8 @@ func main() {
 	certObjConfigStatusChanges := make(chan string)
 	certObjDownloaderChanges := make(chan string)
 
+/*
+	var verifierRestartedFn watch.StatusRestartHandler = handleVerifierRestarted
 	// First we process the verifierStatus to avoid downloading
 	// an base image we already have in place
 	log.Printf("Handling initial verifier Status\n")
@@ -145,6 +146,7 @@ func main() {
 			}
 		}
 	}
+*/
 
 	// start the metrics/config fetch tasks
 	go metricsTimerTask()

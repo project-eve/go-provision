@@ -26,12 +26,12 @@ var verifierStatusMap map[string]types.VerifyImageStatus
 func initVerifierMaps() {
 
 	if verifierConfigMap == nil {
-		fmt.Printf("create verifierConfig map\n")
+		log.Printf("create verifierConfig map\n")
 		verifierConfigMap = make(map[string]types.VerifyImageConfig)
 	}
 
 	if verifierStatusMap == nil {
-		fmt.Printf("create verifierStatus map\n")
+		log.Printf("create verifierStatus map\n")
 		verifierStatusMap = make(map[string]types.VerifyImageStatus)
 	}
 }
@@ -114,7 +114,7 @@ func removeVerifierConfig(objType string, safename string) {
 		log.Printf("removeVerifierConfig for %s - not found\n", key)
 		return
 	}
-	fmt.Printf("removeVerifierConfig for %s, verifier config map delete\n", key)
+	log.Printf("removeVerifierConfig for %s, verifier config map delete\n", key)
 	delete(verifierConfigMap, key)
 
 	configFilename := fmt.Sprintf("%s/%s/config/%s.json",
@@ -136,7 +136,7 @@ func removeVerifierStatus(objType string, safename string) {
 		return
 	}
 
-	fmt.Printf("removeVerifierStatus for %s, verifier status map delete\n", key)
+	log.Printf("removeVerifierStatus for %s, verifier status map delete\n", key)
 	delete(verifierStatusMap, key)
 
 	log.Printf("removeVerifierStatus for %s, Done\n", key)
@@ -201,7 +201,7 @@ func checkStorageVerifierStatus(objType string, uuidStr string,
 	var errorTime time.Time
 	key := formLookupKey(objType, uuidStr)
 
-	fmt.Printf("checkStorageVerifierStatus for %s\n", key)
+	log.Printf("checkStorageVerifierStatus for %s\n", key)
 
 	changed := false
 	minState := types.MAXSTATE
@@ -210,7 +210,7 @@ func checkStorageVerifierStatus(objType string, uuidStr string,
 		ss := &status[i]
 
 		safename := types.UrlToSafename(sc.DownloadURL, sc.ImageSha256)
-		fmt.Printf("checkStorageVerifierStatus for %s, Found StorageConfig URL %s safename %s\n",
+		log.Printf("checkStorageVerifierStatus for %s, Found StorageConfig URL %s safename %s\n",
 			key, sc.DownloadURL, safename)
 
 		vs, err := lookupVerificationStatusAny(objType, safename, sc.ImageSha256)

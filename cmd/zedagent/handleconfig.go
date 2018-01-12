@@ -101,20 +101,20 @@ func getCloudUrls() {
 
 func configTimerTask() {
 
-	fmt.Println("starting config fetch timer task")
+	log.Println("starting config fetch timer task")
 	getLatestConfig(nil, configUrl)
 
 	ticker := time.NewTicker(time.Minute * configTickTimeout)
 
 	for t := range ticker.C {
-		fmt.Println(t)
+		log.Println(t)
 		getLatestConfig(nil, configUrl)
 	}
 }
 
 func getLatestConfig(deviceCert []byte, configUrl string) {
 
-	fmt.Printf("config-url: %s\n", configUrl)
+	log.Printf("config-url: %s\n", configUrl)
 	resp, err := cloudClient.Get("https://" + configUrl)
 
 	if err != nil {
@@ -141,11 +141,11 @@ func validateConfigMessage(r *http.Response) error {
 
 	switch r.StatusCode {
 	case http.StatusOK:
-		fmt.Printf("validateConfigMessage StatusOK\n")
+		log.Printf("validateConfigMessage StatusOK\n")
 	default:
-		fmt.Printf("validateConfigMessage statuscode %d %s\n",
+		log.Printf("validateConfigMessage statuscode %d %s\n",
 			r.StatusCode, http.StatusText(r.StatusCode))
-		fmt.Printf("received response %v\n", r)
+		log.Printf("received response %v\n", r)
 		return fmt.Errorf("http status %d %s",
 			r.StatusCode, http.StatusText(r.StatusCode))
 	}

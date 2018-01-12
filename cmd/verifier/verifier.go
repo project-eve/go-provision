@@ -54,8 +54,8 @@ const (
 	runDirname            = "/var/run/verifier"
 	objectDownloadDirname = "/var/tmp/zedmanager/downloads"
 
-	appImgConfigDirname = baseDirname + appImgObj + "/config"
-	appImgStatusDirname = runDirname + appImgObj + "/status"
+	appImgConfigDirname = baseDirname + "/" + appImgObj + "/config"
+	appImgStatusDirname = runDirname + "/" + appImgObj + "/status"
 
 	baseOsConfigDirname = baseDirname + "/" + baseOsObj + "/config"
 	baseOsStatusDirname = runDirname + "/" + baseOsObj + "/status"

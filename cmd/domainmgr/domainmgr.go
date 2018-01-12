@@ -114,7 +114,7 @@ func handleInit() {
 	initializeDirs()
 
 	if domainStatusMap == nil {
-		fmt.Printf("create domainStatusMap\n")
+		log.Printf("create domainStatusMap\n")
 		domainStatusMap = make(map[string]types.DomainStatus)
 	}
 }

@@ -22,12 +22,12 @@ var baseOsStatusMap map[string]types.BaseOsStatus
 func initBaseOsMaps() {
 
 	if baseOsConfigMap == nil {
-		fmt.Printf("create baseOsConfig map\n")
+		log.Printf("create baseOsConfig map\n")
 		baseOsConfigMap = make(map[string]types.BaseOsConfig)
 	}
 
 	if baseOsStatusMap == nil {
-		fmt.Printf("create baseOsStatus map\n")
+		log.Printf("create baseOsStatus map\n")
 		baseOsStatusMap = make(map[string]types.BaseOsStatus)
 	}
 }
@@ -65,11 +65,11 @@ func addOrUpdateBaseOsConfig(uuidStr string, config types.BaseOsConfig) {
 	if m, ok := baseOsConfigMap[uuidStr]; ok {
 		// XXX or just compare version like elsewhere?
 		if !reflect.DeepEqual(m, config) {
-			fmt.Printf("addOrUpdateBaseOsConfig for %s, Config change\n", uuidStr)
+			log.Printf("addOrUpdateBaseOsConfig for %s, Config change\n", uuidStr)
 			changed = true
 		}
 	} else {
-		fmt.Printf("addOrUpdateBaseOsConfig for %s, Config add\n", uuidStr)
+		log.Printf("addOrUpdateBaseOsConfig for %s, Config add\n", uuidStr)
 		added = true
 		changed = true
 	}
@@ -385,7 +385,7 @@ func doBaseOsUninstall(uuidStr string, status *types.BaseOsStatus) (bool, bool) 
 
 		// Decrease refcount if we had increased it
 		if ss.HasVerifierRef {
-			fmt.Printf("doBaseOsUninstall for %s, Found verifer status %s\n", uuidStr, ss.ImageSha256)
+			log.Printf("doBaseOsUninstall for %s, Found verifer status %s\n", uuidStr, ss.ImageSha256)
 			removeBaseOsVerifierConfig(ss.ImageSha256)
 			ss.HasVerifierRef = false
 			changed = true
@@ -412,7 +412,7 @@ func doBaseOsUninstall(uuidStr string, status *types.BaseOsStatus) (bool, bool) 
 
 		ss := &status.StorageStatusList[i]
 		safename := types.UrlToSafename(ss.DownloadURL, ss.ImageSha256)
-		fmt.Printf("doBaseOsUninstall for %s, Found Downloader status %s\n", uuidStr, safename)
+		log.Printf("doBaseOsUninstall for %s, Found Downloader status %s\n", uuidStr, safename)
 
 		// Decrease refcount if we had increased it
 		if ss.HasDownloaderRef {

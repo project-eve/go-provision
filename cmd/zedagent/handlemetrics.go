@@ -383,8 +383,8 @@ func PublishDeviceInfoToZedCloud(baseOsStatus map[string]types.BaseOsStatus) {
 		x.Dinfo = ReportDeviceInfo
 	}
 
-	fmt.Println(ReportInfo)
-	fmt.Println(" ")
+	log.Println(ReportInfo)
+	log.Println(" ")
 
 	SendInfoProtobufStrThroughHttp(ReportInfo)
 }
@@ -430,8 +430,8 @@ func PublishHypervisorInfoToZedCloud() {
 		x.Hinfo = ReportHypervisorInfo
 	}
 
-	fmt.Println(ReportInfo)
-	fmt.Println(" ")
+	log.Println(ReportInfo)
+	log.Println(" ")
 
 	SendInfoProtobufStrThroughHttp(ReportInfo)
 }
@@ -472,8 +472,8 @@ func PublishAppInfoToZedCloud(aiStatus *types.AppInstanceStatus) {
 		x.Ainfo = ReportAppInfo
 	}
 
-	fmt.Println(ReportInfo)
-	fmt.Println(" ")
+	log.Println(ReportInfo)
+	log.Println(" ")
 
 	SendInfoProtobufStrThroughHttp(ReportInfo)
 }
@@ -482,24 +482,24 @@ func SendInfoProtobufStrThroughHttp(ReportInfo *zmet.ZInfoMsg) {
 
 	data, err := proto.Marshal(ReportInfo)
 	if err != nil {
-		fmt.Println("marshaling error: ", err)
+		log.Println("marshaling error: ", err)
 	}
 
-	fmt.Printf("status-url: %s\n", statusUrl)
+	log.Printf("status-url: %s\n", statusUrl)
 	resp, err := cloudClient.Post("https://"+statusUrl,
 		"application/x-proto-binary", bytes.NewBuffer(data))
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		return
 	}
 	defer resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusOK:
-		fmt.Printf("SendInfoProtobufStrThroughHttp StatusOK\n")
+		log.Printf("SendInfoProtobufStrThroughHttp StatusOK\n")
 	default:
-		fmt.Printf("SendInfoProtobufStrThroughHttp statuscode %d %s\n",
+		log.Printf("SendInfoProtobufStrThroughHttp statuscode %d %s\n",
 			resp.StatusCode, http.StatusText(resp.StatusCode))
-		fmt.Printf("received response %v\n", resp)
+		log.Printf("received response %v\n", resp)
 	}
 }
 
@@ -507,23 +507,23 @@ func SendMetricsProtobufStrThroughHttp(ReportMetrics *zmet.ZMetricMsg) {
 
 	data, err := proto.Marshal(ReportMetrics)
 	if err != nil {
-		fmt.Println("marshaling error: ", err)
+		log.Println("marshaling error: ", err)
 	}
 
-	fmt.Printf("metrics-url: %s\n", metricsUrl)
+	log.Printf("metrics-url: %s\n", metricsUrl)
 	resp, err := cloudClient.Post("https://"+metricsUrl,
 		"application/x-proto-binary", bytes.NewBuffer(data))
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		return
 	}
 	defer resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusOK:
-		fmt.Printf("SendMetricsProtobufStrThroughHttp StatusOK\n")
+		log.Printf("SendMetricsProtobufStrThroughHttp StatusOK\n")
 	default:
-		fmt.Printf("SendMetricsProtobufStrThroughHttp statuscode %d %s\n",
+		log.Printf("SendMetricsProtobufStrThroughHttp statuscode %d %s\n",
 			resp.StatusCode, http.StatusText(resp.StatusCode))
-		fmt.Printf("received response %v\n", resp)
+		log.Printf("received response %v\n", resp)
 	}
 }

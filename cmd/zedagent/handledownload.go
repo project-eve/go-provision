@@ -26,12 +26,12 @@ var downloaderStatusMap map[string]types.DownloaderStatus
 func initDownloaderMaps() {
 
 	if downloaderConfigMap == nil {
-		fmt.Printf("create downloaderConfig map\n")
+		log.Printf("create downloaderConfig map\n")
 		downloaderConfigMap = make(map[string]types.DownloaderConfig)
 	}
 
 	if downloaderStatusMap == nil {
-		fmt.Printf("create downloadetStatus map\n")
+		log.Printf("create downloadetStatus map\n")
 		downloaderStatusMap = make(map[string]types.DownloaderStatus)
 	}
 }
@@ -155,7 +155,7 @@ func removeDownloaderStatus(objType string, statusFilename string) {
 			key)
 		return
 	}
-	fmt.Printf("removeDownloaderStatus for %s, Downloader status map delete\n", key)
+	log.Printf("removeDownloaderStatus for %s, Downloader status map delete\n", key)
 	delete(downloaderStatusMap, key)
 
 	log.Printf("removeDownloaderStatus done for %s\n", key)
