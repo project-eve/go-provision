@@ -119,12 +119,12 @@ func updateAIStatusSafename(safename string) {
 	log.Printf("updateAIStatusSafename for %s\n", safename)
 
 	for _, config := range AIC {
-		fmt.Printf("found AIC for UUID %s\n",
+		log.Printf("found AIC for UUID %s\n",
 			config.UUIDandVersion.UUID)
 		for _, sc := range config.StorageConfigList {
 			safename2 := types.UrlToSafename(sc.DownloadURL, sc.ImageSha256)
 			if safename == safename2 {
-				fmt.Printf("Found StorageConfig URL %s safename %s\n",
+				log.Printf("Found StorageConfig URL %s safename %s\n",
 					sc.DownloadURL, safename2)
 				updateAIStatusUUID(config.UUIDandVersion.UUID.String())
 				break
@@ -195,7 +195,7 @@ func removeAIStatusSafename(safename string) {
 	log.Printf("removeAIStatusSafename for %s\n", safename)
 
 	for _, status := range AIS {
-		fmt.Printf("found AIS for UUID %s\n",
+		log.Printf("found AIS for UUID %s\n",
 			status.UUIDandVersion.UUID)
 		for _, ss := range status.StorageStatusList {
 			safename2 := types.UrlToSafename(ss.DownloadURL, ss.ImageSha256)

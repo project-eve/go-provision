@@ -38,21 +38,24 @@ import (
 
 // Keeping status in /var/run to be clean after a crash/reboot
 const (
-	globalObj = ""
 	appImgObj = "appImg.obj"
 	baseOsObj = "baseOs.obj"
-	certObj   = "cert.obj"
 
-	moduleName       = "verifier"
+	moduleName            = "verifier"
+	zedBaseDirname        = "/var/tmp"
+	zedRunDirname         = "/var/run"
+	baseDirname           = zedBaseDirname + "/" + moduleName
+	runDirname            = zedRunDirname + "/" + moduleName
+	configDirname         = baseDirname + "/config"
+	statusDirname         = runDirname + "/status"
+	objectDownloadDirname = "/var/tmp/zedmanager/downloads"
+
 	certsDirname     = "/var/tmp/zedmanager/certs"
 	rootCertDirname  = "/opt/zededa/etc"
 	rootCertFileName = rootCertDirname + "/root-certificate.pem"
 
 	// If this file is present we don't delete verified files in handleDelete
-	preserveFilename      = baseDirname + "/config/preserve"
-	baseDirname           = "/var/tmp/verifier"
-	runDirname            = "/var/run/verifier"
-	objectDownloadDirname = "/var/tmp/zedmanager/downloads"
+	preserveFilename = configDirname + "/preserve"
 
 	appImgConfigDirname = baseDirname + "/" + appImgObj + "/config"
 	appImgStatusDirname = runDirname + "/" + appImgObj + "/status"
@@ -278,6 +281,7 @@ func verifyObjectSha(config *types.VerifyImageConfig,
 		log.Printf("Sha validation failed for %s\n", config.DownloadURL)
 		return false
 	}
+
 	log.Printf("Sha validation successful for %s\n", config.DownloadURL)
 
 	if cerr := verifyObjectShaSignature(status, config, imageHash); cerr != "" {
@@ -361,6 +365,7 @@ func verifyObjectShaSignature(status *types.VerifyImageStatus,
 	//  as valid may not hold good always!!!
 	if (config.ImageSignature == nil) ||
 		(len(config.ImageSignature) == 0) {
+		log.Printf("ImageSignature is absent for %s\n", config.Safename)
 		return ""
 	}
 

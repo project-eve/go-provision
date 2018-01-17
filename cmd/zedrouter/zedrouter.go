@@ -27,11 +27,13 @@ import (
 
 // Keeping status in /var/run to be clean after a crash/reboot
 const (
-	moduleName = "zedrouter"
-	runDirname = "/var/run/zedrouter"
-	baseDirname = "/var/tmp/zedrouter"
-	configDirname = baseDirname + "/config"
-	statusDirname = runDirname + "/status"
+	moduleName     = "zedrouter"
+	zedBaseDirname = "/var/tmp"
+	zedRunDirname  = "/var/run"
+	baseDirname    = zedBaseDirname + "/" + moduleName
+	runDirname     = zedRunDirname + "/" + moduleName
+	configDirname  = baseDirname + "/config"
+	statusDirname  = runDirname + "/status"
 )
 
 // Set from Makefile
@@ -64,7 +66,7 @@ func main() {
 
 	// Wait for zedmanager having populated the intial files to
 	// reduce the number of LISP-RESTARTs
-	restartFile := "/var/tmp/zedrouter/config/restart"
+	restartFile := configDirname + "/restart"
 	log.Printf("Waiting for zedmanager to report in %s\n", restartFile)
 	watch.WaitForFile(restartFile)
 	log.Printf("Zedmanager reported in %s\n", restartFile)

@@ -238,7 +238,7 @@ func checkStorageVerifierStatus(objType string, uuidStr string,
 			errorTime = vs.LastErrTime
 			changed = true
 		default:
-			ss.ActiveFileLocation = objDownloadDirname + "/" + objType + "/" + vs.Safename
+			ss.ActiveFileLocation = objectDownloadDirname + "/" + objType + "/" + vs.Safename
 
 			log.Printf("checkStorageVerifierStatus for %s, Update SSL ActiveFileLocation for %s: %s\n",
 				key, uuidStr, ss.ActiveFileLocation)

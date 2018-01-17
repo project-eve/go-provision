@@ -91,7 +91,7 @@ func updateDownloaderStatus(objType string, status *types.DownloaderStatus) {
 	if m, ok := downloaderStatusMap[key]; ok {
 		if status.State != m.State {
 			log.Printf("Download state %s, state changed from %v to %v\n",
-				 key, m.State, status.State)
+				key, m.State, status.State)
 			changed = true
 		}
 	} else {
@@ -194,7 +194,7 @@ func checkStorageDownloadStatus(objType string, uuidStr string,
 		if sc.NeedVerification {
 			// Shortcut if image is already verified
 			vs, err := lookupVerificationStatusAny(objType,
-							safename, sc.ImageSha256)
+				safename, sc.ImageSha256)
 
 			if err == nil && vs.State == types.DELIVERED {
 				log.Printf("Verifier status for %s, Found verified object, sha %s\n",
@@ -219,8 +219,8 @@ func checkStorageDownloadStatus(objType string, uuidStr string,
 		}
 
 		if !ss.HasDownloaderRef {
-				log.Printf("Download status for %s, !HasDownloaderRef\n",
-					sc.DownloadURL)
+			log.Printf("Download status for %s, !HasDownloaderRef\n",
+				sc.DownloadURL)
 			createDownloaderConfig(objType, safename, &sc)
 			ss.HasDownloaderRef = true
 			changed = true
@@ -303,7 +303,7 @@ func installDownloadedObject(objType string, safename string,
 	config types.StorageConfig, status *types.StorageStatus) bool {
 
 	var dstFilename string = config.FinalObjDir
-	var srcFilename string = objDownloadDirname + "/" + objType
+	var srcFilename string = objectDownloadDirname + "/" + objType
 
 	key := formLookupKey(objType, safename)
 
@@ -324,7 +324,7 @@ func installDownloadedObject(objType string, safename string,
 		break
 
 	default:
-		log.Printf("installDownloadedObject for %s, invalid state %d\n",key, status.State)
+		log.Printf("installDownloadedObject for %s, invalid state %d\n", key, status.State)
 		return false
 	}
 

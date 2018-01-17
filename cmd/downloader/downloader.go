@@ -46,13 +46,12 @@ const (
 	baseOsObj = "baseOs.obj"
 	certObj   = "cert.obj"
 
-	moduleName = "downloader"
-
-	zedBaseDirname     = "/var/tmp"
-	zedRunDirname      = "/var/run"
-	baseDirname        = "/var/tmp/downloader"
-	runDirname         = "/var/run/downloader"
-	certsDirname       = "/var/tmp/zedmanager/certs"
+	moduleName            = "downloader"
+	zedBaseDirname        = "/var/tmp"
+	zedRunDirname         = "/var/run"
+	baseDirname           = zedBaseDirname + "/" + moduleName
+	runDirname            = zedRunDirname + "/" + moduleName
+	certsDirname          = "/var/tmp/zedmanager/certs"
 	objectDownloadDirname = "/var/tmp/zedmanager/downloads"
 
 	downloaderConfigDirname = baseDirname + "/config"

@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	zedrouterConfigBaseDirname = "/var/tmp/zedrouter"
-	zedrouterConfigDirname     = zedrouterConfigBaseDirname + "/config"
+	zedrouterModulename    = "zedrouter"
+	zedrouterConfigDirname = zedBaseDirname + "/" + zedrouterModulename + "/config"
 )
 
 // XXX remove global variable

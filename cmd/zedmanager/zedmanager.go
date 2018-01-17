@@ -23,22 +23,28 @@ import (
 
 // Keeping status in /var/run to be clean after a crash/reboot
 const (
-	appImgObj                = "appImg.obj"
-	domainMgrModulename      = "domainmgr"
-	downloaderModulename     = "downloader"
-	idenityMgrModulename     = "idenitymgr"
-	zedmanagerModulename     = "zedmanager"
-	zedRoutererModulename    = "zedagent"
-	verifierModulename       = "verifier"
-	baseDirname              = "/var/tmp/zedmanager"
-	runDirname               = "/var/run/zedmanager"
-	zedmanagerConfigDirname  = baseDirname + "/config"
-	zedmanagerStatusDirname  = runDirname + "/status"
-	domainmgrConfigDirname   = "/var/tmp/domainmgr/config"
-	zedrouterConfigDirname   = "/var/tmp/zedrouter/config"
-	identitymgrConfigDirname = "/var/tmp/identitymgr/config"
-	verifierConfigDirname    = "/var/tmp/verifier/appImg.obj/config"
-	downloaderConfigDirname  = "/var/tmp/downloader/appImg.obj/config"
+	appImgObj             = "appImg.obj"
+	domainMgrModulename   = "domainmgr"
+	downloaderModulename  = "downloader"
+	identityMgrModulename = "identitymgr"
+	zedmanagerModulename  = "zedmanager"
+	zedrouterModulename   = "zedrouter"
+	verifierModulename    = "verifier"
+
+	moduleName     = "zedmanager"
+	zedBaseDirname = "/var/tmp"
+	zedRunDirname  = "/var/run"
+	baseDirname    = zedBaseDirname + "/" + moduleName
+	runDirname     = zedRunDirname + "/" + moduleName
+
+	zedmanagerConfigDirname = baseDirname + "/config"
+	zedmanagerStatusDirname = runDirname + "/status"
+
+	domainmgrConfigDirname   = zedBaseDirname + "/" + domainMgrModulename + "/config"
+	zedrouterConfigDirname   = zedBaseDirname + "/" + zedrouterModulename + "/config"
+	identitymgrConfigDirname = zedBaseDirname + "/" + identityMgrModulename + "/config"
+	verifierConfigDirname    = zedBaseDirname + "/" + verifierModulename + "/" + appImgObj + "/config"
+	downloaderConfigDirname  = zedBaseDirname + "/" + downloaderModulename + "/" + appImgObj + "/config"
 )
 
 // Set from Makefile
@@ -60,14 +66,14 @@ func main() {
 	watch.CleanupRestart("identitymgr")
 	watch.CleanupRestart("zedrouter")
 	watch.CleanupRestart("domainmgr")
-	watch.CleanupRestart("zedagent")
 
-	verifierStatusDirname := "/var/run/verifier/status"
-	domainmgrStatusDirname := "/var/run/domainmgr/status"
-	zedrouterStatusDirname := "/var/run/zedrouter/status"
-	identitymgrStatusDirname := "/var/run/identitymgr/status"
-	verifierAppImgObjStatusDirname := "/var/run/verifier/appImg.obj/status"
-	downloaderAppImgObjStatusDirname := "/var/run/downloader/appImg.obj/status"
+	// status dirs
+	verifierStatusDirname := zedRunDirname + "/" + verifierModulename + "/status"
+	domainmgrStatusDirname := zedRunDirname + "/" + domainMgrModulename + "/status"
+	zedrouterStatusDirname := zedRunDirname + "/" + zedrouterModulename + "/status"
+	identitymgrStatusDirname := zedRunDirname + "/" + identityMgrModulename + "/status"
+	verifierAppImgObjStatusDirname := zedRunDirname + "/" + verifierModulename + "/" + appImgObj + "/status"
+	downloaderAppImgObjStatusDirname := zedRunDirname + "/" + downloaderModulename + "/" + appImgObj + "/status"
 
 	// only handle opp image type objects
 	var noObjTypes []string
@@ -75,10 +81,12 @@ func main() {
 
 	// create config/status dirs
 	watch.CreateConfigStatusDirs(domainMgrModulename, noObjTypes)
-	watch.CreateConfigStatusDirs(downloaderModulename, objTypes)
-	watch.CreateConfigStatusDirs(idenityMgrModulename, noObjTypes)
+	watch.CreateConfigStatusDirs(identityMgrModulename, noObjTypes)
 	watch.CreateConfigStatusDirs(zedmanagerModulename, noObjTypes)
-	watch.CreateConfigStatusDirs(zedRoutererModulename, noObjTypes)
+	watch.CreateConfigStatusDirs(zedrouterModulename, noObjTypes)
+
+	// create config/atatus dirs also for app images
+	watch.CreateConfigStatusDirs(downloaderModulename, objTypes)
 	watch.CreateConfigStatusDirs(verifierModulename, objTypes)
 
 	// Tell ourselves to go ahead

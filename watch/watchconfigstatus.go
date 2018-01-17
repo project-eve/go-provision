@@ -20,8 +20,8 @@ import (
 )
 
 const (
-	zedBaseDirname     = "/var/tmp"
-	zedRunDirname      = "/var/run"
+	zedBaseDirname = "/var/tmp"
+	zedRunDirname  = "/var/run"
 )
 
 // Generates 'M' events for all existing and all creates/modify.
@@ -168,8 +168,10 @@ func WatchStatus(statusDir string, fileChanges chan<- string) {
 func CreateConfigStatusDirs(moduleName string, objTypes []string) {
 
 	jobDirs := []string{"/config", "/status"}
-	zedBaseDirs := []string {zedBaseDirname, zedRunDirname}
+	zedBaseDirs := []string{zedBaseDirname, zedRunDirname}
 	baseDirs := make([]string, len(zedBaseDirs))
+
+	log.Printf("Creating config/status dirs for %s\n", moduleName)
 
 	for idx, dir := range zedBaseDirs {
 		baseDirs[idx] = dir + "/" + moduleName
@@ -179,14 +181,17 @@ func CreateConfigStatusDirs(moduleName string, objTypes []string) {
 
 		dirName := baseDir + jobDirs[idx]
 		if _, err := os.Stat(dirName); err != nil {
+			log.Printf("Create %s\n", dirName)
 			if err := os.MkdirAll(dirName, 0700); err != nil {
 				log.Fatal(err)
 			}
 		}
 
+		// Creating Object based holder dirs
 		for _, objType := range objTypes {
 			dirName := baseDir + "/" + objType + jobDirs[idx]
 			if _, err := os.Stat(dirName); err != nil {
+				log.Printf("Create %s\n", dirName)
 				if err := os.MkdirAll(dirName, 0700); err != nil {
 					log.Fatal(err)
 				}

@@ -12,11 +12,23 @@ import (
 	"strings"
 )
 
+const (
+	MaxBaseOsCount = 2
+)
+
 func parseConfig(config *zconfig.EdgeDevConfig) {
 
 	log.Println("Applying new config")
-	parseBaseOsConfig(config)
-	parseAppInstanceConfig(config)
+	if validateConfig(config) == true {
+		parseBaseOsConfig(config)
+		parseAppInstanceConfig(config)
+	}
+}
+
+func validateConfig(config *zconfig.EdgeDevConfig) bool {
+
+	//XXX:FIXME, check if any validation required
+	return true
 }
 
 func parseBaseOsConfig(config *zconfig.EdgeDevConfig) {
@@ -25,66 +37,67 @@ func parseBaseOsConfig(config *zconfig.EdgeDevConfig) {
 
 	cfgOsList := config.GetBase()
 
-	if len(cfgOsList) != 0 {
+	if len(cfgOsList) == 0 {
+		return
+	}
 
-		baseOsList := make([]types.BaseOsConfig, len(cfgOsList))
+	baseOsList := make([]types.BaseOsConfig, len(cfgOsList))
 
-		for idx, cfgOs := range cfgOsList {
+	for idx, cfgOs := range cfgOsList {
 
-			baseOs := new(types.BaseOsConfig)
+		baseOs := new(types.BaseOsConfig)
 
-			baseOs.UUIDandVersion.UUID, _ = uuid.FromString(cfgOs.Uuidandversion.Uuid)
-			baseOs.UUIDandVersion.Version = cfgOs.Uuidandversion.Version
+		baseOs.UUIDandVersion.UUID, _ = uuid.FromString(cfgOs.Uuidandversion.Uuid)
+		baseOs.UUIDandVersion.Version = cfgOs.Uuidandversion.Version
 
-			baseOs.Activate = cfgOs.GetActivate()
-			baseOs.BaseOsVersion = cfgOs.GetBaseOSVersion()
+		baseOs.Activate = cfgOs.GetActivate()
+		baseOs.BaseOsVersion = cfgOs.GetBaseOSVersion()
 
-			cfgOsDetails := cfgOs.GetBaseOSDetails()
-			cfgOsParamList := cfgOsDetails.GetBaseOSParams()
+		cfgOsDetails := cfgOs.GetBaseOSDetails()
+		cfgOsParamList := cfgOsDetails.GetBaseOSParams()
 
-			for jdx, cfgOsDetail := range cfgOsParamList {
-				param := new(types.OsVerParams)
-				param.OSVerKey = cfgOsDetail.GetOSVerKey()
-				param.OSVerValue = cfgOsDetail.GetOSVerValue()
-				baseOs.OsParams[jdx] = *param
-			}
+		for jdx, cfgOsDetail := range cfgOsParamList {
+			param := new(types.OsVerParams)
+			param.OSVerKey = cfgOsDetail.GetOSVerKey()
+			param.OSVerValue = cfgOsDetail.GetOSVerValue()
+			baseOs.OsParams[jdx] = *param
+		}
 
-			var imageCount int
-			for _, drive := range cfgOs.Drives {
-				if drive.Image != nil {
-					imageId := drive.Image.DsId
+		var imageCount int
+		for _, drive := range cfgOs.Drives {
+			if drive.Image != nil {
+				imageId := drive.Image.DsId
 
-					for _, dsEntry := range config.Datastores {
-						if dsEntry.Id == imageId {
-							imageCount++
-							break
-						}
+				for _, dsEntry := range config.Datastores {
+					if dsEntry.Id == imageId {
+						imageCount++
+						break
 					}
 				}
 			}
-
-			if imageCount != 0 {
-				baseOs.StorageConfigList = make([]types.StorageConfig, imageCount)
-				parseStorageConfigList(config, baseOsObj, baseOs.StorageConfigList,
-					cfgOs.Drives)
-			}
-
-			baseOsList[idx] = *baseOs
-
-			getCertObjects(baseOs.UUIDandVersion, baseOs.ConfigSha256,
-				baseOs.StorageConfigList)
-
-			// Dump the config content
-			bytes, err := json.Marshal(baseOs)
-
-			if err == nil {
-				log.Printf("New/updated BaseOs %d: %s\n", idx, bytes)
-			}
 		}
 
-		if validateBaseOsConfig(baseOsList) == true {
-			createBaseOsConfig(baseOsList)
+		if imageCount != 0 {
+			baseOs.StorageConfigList = make([]types.StorageConfig, imageCount)
+			parseStorageConfigList(config, baseOsObj, baseOs.StorageConfigList,
+				cfgOs.Drives)
 		}
+
+		baseOsList[idx] = *baseOs
+
+		getCertObjects(baseOs.UUIDandVersion, baseOs.ConfigSha256,
+			baseOs.StorageConfigList)
+
+		// Dump the config content
+		bytes, err := json.Marshal(baseOs)
+
+		if err == nil {
+			log.Printf("New/updated BaseOs %d: %s\n", idx, bytes)
+		}
+	}
+
+	if validateBaseOsConfig(baseOsList) == true {
+		createBaseOsConfig(baseOsList)
 	}
 }
 
@@ -523,8 +536,8 @@ func validateBaseOsConfig(baseOsList []types.BaseOsConfig) bool {
 
 	var osCount, activateCount int
 
-	// not more than 2 base os config
-	if len(baseOsList) > 2 {
+	// not more than max base os count(2)
+	if len(baseOsList) > MaxBaseOsCount {
 		return false
 	}
 
@@ -541,6 +554,28 @@ func validateBaseOsConfig(baseOsList []types.BaseOsConfig) bool {
 	if osCount != 0 {
 		if activateCount != 1 {
 			return false
+		}
+	}
+
+	// check if the Sha is same, for different names
+	for idx, baseOsConfig0 := range baseOsList {
+
+		for bidx, baseOsConfig1 := range baseOsList {
+
+			if idx <= bidx {
+				continue
+			}
+			// compare the drives, for same Sha
+			for _, drive0 := range baseOsConfig0.StorageConfigList {
+				for _, drive1 := range baseOsConfig1.StorageConfigList {
+					// if sha is same for URLs
+					if drive0.ImageSha256 == drive1.ImageSha256 &&
+						drive0.DownloadURL != drive1.DownloadURL {
+						return false
+					}
+
+				}
+			}
 		}
 	}
 	return true

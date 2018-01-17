@@ -34,11 +34,13 @@ import (
 
 // Keeping status in /var/run to be clean after a crash/reboot
 const (
-	moduleName = "idenitymgr"
-	baseDirname = "/var/tmp/" + moduleName
-	runDirname = "/var/run/" + moduleName
-	configDirname = baseDirname + "/config"
-	statusDirname = runDirname + "/status"
+	moduleName     = "identitymgr"
+	zedBaseDirname = "/var/tmp"
+	zedRunDirname  = "/var/run"
+	baseDirname    = zedBaseDirname + "/" + moduleName
+	runDirname     = zedRunDirname + "/" + moduleName
+	configDirname  = baseDirname + "/config"
+	statusDirname  = runDirname + "/status"
 )
 
 // Set from Makefile
