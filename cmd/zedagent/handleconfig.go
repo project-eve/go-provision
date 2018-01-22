@@ -35,6 +35,7 @@ var metricsApi string = "api/v1/edgedevice/metrics"
 // XXX remove global variables
 // XXX shouldn't we know our own deviceId?
 var deviceId string
+
 // These URLs are effectively constants; depends on the server name
 var configUrl string
 var metricsUrl string
@@ -97,7 +98,7 @@ func getCloudUrls() {
 // for each of the above buckets
 
 func configTimerTask() {
-	iteration := 0     
+	iteration := 0
 	fmt.Println("starting config fetch timer task")
 	getLatestConfig(configUrl, iteration)
 

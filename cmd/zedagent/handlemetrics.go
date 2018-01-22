@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"github.com/golang/protobuf/ptypes"
 	"github.com/golang/protobuf/proto"
 	"github.com/shirou/gopsutil/cpu"
 	"github.com/shirou/gopsutil/disk"
@@ -11,9 +12,9 @@ import (
 	psutilnet "github.com/shirou/gopsutil/net"
 	"github.com/zededa/api/zmet"
 	"github.com/zededa/go-provision/types"
+	"log"
 	"net"
 	"net/http"
-	"log"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -94,7 +95,7 @@ func GetDeviceManufacturerInfo() (string, string, string, string, string) {
 	return productManufacturer, productName, productVersion, productSerial, productUuid
 }
 
-func ExecuteXentopCmd() [][]string{
+func ExecuteXentopCmd() [][]string {
 	var cpuStorageStat [][]string
 
 	count := 0
@@ -190,6 +191,7 @@ func ExecuteXentopCmd() [][]string{
 func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 
 	var ReportMetrics = &zmet.ZMetricMsg{}
+	//var devAndAppMetric = &zmet.Metrics{}
 
 	ReportDeviceMetric := new(zmet.DeviceMetric)
 	ReportDeviceMetric.Cpu = new(zmet.CpuMetric)
@@ -200,6 +202,7 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 	*ReportZmetric = zmet.ZmetricTypes_ZmDevice
 
 	ReportMetrics.Ztype = *ReportZmetric
+	ReportMetrics.AtTimeStamp = ptypes.TimestampNow()
 
 	// Handle xentop failing above
 	if len(cpuStorageStat) == 0 {
@@ -207,7 +210,38 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 		SendMetricsProtobufStrThroughHttp(ReportMetrics, iteration)
 		return
 	}
-	
+	if len(cpuStorageStat) > 1 {
+		log.Println("domu has been spawned....so we will report it's metrics")
+		ReportMetrics.Am = make([]*zmet.AppMetric, len(cpuStorageStat)-1)
+		var countApp int
+		countApp = 0
+		for appArr := 2; appArr < len(cpuStorageStat)+1; appArr++ {
+			ReportAppMetric := new(zmet.AppMetric)
+			ReportAppMetric.Cpu = new(zmet.AppCpuMetric)
+			ReportAppMetric.Memory = new(zmet.MemoryMetric)
+
+			ReportAppMetric.AppName = cpuStorageStat[appArr][1]
+
+			appCpuUpTime, _ := strconv.ParseUint(cpuStorageStat[appArr][3], 10, 0)
+			ReportAppMetric.Cpu.UpTime = *proto.Uint32(uint32(appCpuUpTime))
+			appCpuUsedInPercent, _ := strconv.ParseFloat(cpuStorageStat[appArr][4], 10)
+			ReportAppMetric.Cpu.CpuUtilization = *proto.Float64(float64(appCpuUsedInPercent))
+
+			totalAppMemory, _ := strconv.ParseUint(cpuStorageStat[appArr][5], 10, 0)
+			usedAppMemoryPercent, _ := strconv.ParseUint(cpuStorageStat[appArr][6], 10, 0)
+			usedMemory := ((totalAppMemory) * (usedAppMemoryPercent)) / 100
+			availableMemory := totalAppMemory - usedMemory
+			availableAppMemoryPercent := 100 - usedAppMemoryPercent
+
+			ReportAppMetric.Memory.UsedMem = uint32(usedMemory)
+			ReportAppMetric.Memory.AvailMem = uint32(availableMemory)
+			ReportAppMetric.Memory.UsedPercentage = float64(usedAppMemoryPercent)
+			ReportAppMetric.Memory.AvailPercentage = float64(availableAppMemoryPercent)
+
+			ReportMetrics.Am[countApp] = ReportAppMetric
+			countApp++
+		}
+	}
 	for arr := 1; arr < 2; arr++ {
 
 		cpuTime, _ := strconv.ParseUint(cpuStorageStat[arr][3], 10, 0)
@@ -259,6 +293,8 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 				ReportDeviceMetric.Network[netx] = networkDetails
 			}
 		}
+		//devAndAppMetric.Dm = ReportDeviceMetric
+        //ReportMetrics.DevAndAppMetrics = devAndAppMetric
 		ReportMetrics.MetricContent = new(zmet.ZMetricMsg_Dm)
 		if x, ok := ReportMetrics.GetMetricContent().(*zmet.ZMetricMsg_Dm); ok {
 			x.Dm = ReportDeviceMetric
@@ -427,7 +463,7 @@ func PublishHypervisorInfoToZedCloud(iteration int) {
 
 // XXX change caller filename to key which is uuid; not used for now
 func PublishAppInfoToZedCloud(uuid string, aiStatus *types.AppInstanceStatus,
-     iteration int) {
+	iteration int) {
 	fmt.Printf("PublishAppInfoToZedCloud uuid %s\n", uuid)
 	// XXX if it was deleted we publish nothing; do we need to delete from
 	// zedcloud?
@@ -536,7 +572,7 @@ func SendInfoProtobufStrThroughHttp(ReportInfo *zmet.ZInfoMsg, iteration int) {
 // Each iteration we try a different uplink. For each uplink we try all
 // its local IP addresses until we get a success.
 func SendMetricsProtobufStrThroughHttp(ReportMetrics *zmet.ZMetricMsg,
-     iteration int) {
+	iteration int) {
 	data, err := proto.Marshal(ReportMetrics)
 	if err != nil {
 		fmt.Println("marshaling error: ", err)
@@ -551,7 +587,7 @@ func SendMetricsProtobufStrThroughHttp(ReportMetrics *zmet.ZMetricMsg,
 	// XXX makes logfile too long; debug flag?
 	log.Printf("Connecting to %s using intf %s interation %d #sources %d\n",
 		metricsUrl, intf, iteration, addrCount)
-	
+
 	for retryCount := 0; retryCount < addrCount; retryCount += 1 {
 		localAddr, err := types.GetLocalAddrAny(globalStatus,
 			retryCount, intf)

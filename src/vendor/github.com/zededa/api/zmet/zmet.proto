@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-/*import "google/protobuf/timestamp.proto";*/
+import "google/protobuf/timestamp.proto";
 option go_package  = "github.com/zededa/api/zmet";
 
 /*
@@ -180,13 +180,23 @@ message deviceMetric {
   memoryMetric memory = 2;
   repeated networkMetric network = 3;
 }
+message appMetric {
+  appCpuMetric cpu = 1;
+  memoryMetric memory = 2;
+  repeated networkMetric network = 3;
+}
+message appCpuMetric {
+    uint32 upTime = 2;
+	double cpuUtilization = 3;
+}
 
 message ZMetricMsg {
   string devID = 1;
   ZmetricTypes ztype = 2;
-  /*google.protobuf.Timestamp atTimeStamp = 3; */
+  google.protobuf.Timestamp atTimeStamp = 3;
 
   oneof MetricContent {
   	deviceMetric dm = 4;
    }
+   repeated appMetric am = 5;
 }

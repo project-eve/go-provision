@@ -22,7 +22,7 @@ const (
 	zedmanagerStatusDirname = "/var/run/zedmanager/status"
 	downloaderConfigDirname = "/var/tmp/downloader/config"
 	downloaderStatusDirname = "/var/run/downloader/status"
-	DNSDirname		= "/var/run/zedrouter/DeviceNetworkStatus"
+	DNSDirname              = "/var/run/zedrouter/DeviceNetworkStatus"
 )
 
 // Set from Makefile
@@ -78,7 +78,7 @@ func main() {
 					handleStatusDelete, nil)
 				continue
 			}
-		case change := <- deviceStatusChanges:
+		case change := <-deviceStatusChanges:
 			watch.HandleStatusEvent(change,
 				DNSDirname,
 				&types.DeviceNetworkStatus{},
