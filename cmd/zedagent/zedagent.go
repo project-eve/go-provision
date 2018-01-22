@@ -91,12 +91,15 @@ const (
 	// base os verifier status holder
 	verifierBaseOsConfigDirname = verifierBaseDirname + "/" + baseOsObj + "/config"
 	verifierBaseOsStatusDirname = verifierRunDirname + "/" + baseOsObj + "/status"
+	DNSDirname                  = "/var/run/zedrouter/DeviceNetworkStatus"
 )
 
 var verifierRestarted = false
 
 // Set from Makefile
 var Version = "No version specified"
+
+var globalStatus types.DeviceNetworkStatus
 
 func main() {
 
@@ -160,6 +163,7 @@ func main() {
 	// start the metrics/config fetch tasks
 	go metricsTimerTask()
 	go configTimerTask()
+
 	// app instance status event watcher
 	go watch.WatchConfigStatus(zedmanagerConfigDirname,
 		zedmanagerStatusDirname, appInstanceStatusChanges)
@@ -187,6 +191,9 @@ func main() {
 	// for restart flag handling
 	go watch.WatchConfigStatus(zedagentConfigDirname,
 		zedagentStatusDirname, fileChanges)
+
+	deviceStatusChanges := make(chan string)
+	go watch.WatchStatus(DNSDirname, deviceStatusChanges)
 
 	for {
 		select {
@@ -271,6 +278,12 @@ func main() {
 					handleCertObjDownloadStatusDelete, nil)
 				continue
 			}
+		case change := <-deviceStatusChanges:
+			watch.HandleStatusEvent(change,
+				DNSDirname,
+				&types.DeviceNetworkStatus{},
+				handleDNSModify, handleDNSDelete,
+				nil)
 		}
 	}
 }
@@ -291,6 +304,8 @@ func handleVerifierRestarted(done bool) {
 		verifierRestarted = true
 	}
 }
+
+var publishIteration = 0
 
 func handleInit() {
 
@@ -341,22 +356,56 @@ func handleAppInstanceStatusModify(statusFilename string,
 		status = statusArg.(*types.AppInstanceStatus)
 	}
 
-	PublishAppInfoToZedCloud(status)
+	uuidStr := status.UUIDandVersion.UUID.String()
+	PublishAppInfoToZedCloud(uuidStr, status, publishIteration)
+	publishIteration += 1
 }
 
 func handleAppInstanceStatusDelete(statusFilename string,
 	statusArg interface{}) {
 
 	var status *types.AppInstanceStatus
-
 	switch statusArg.(type) {
 	default:
 		log.Fatal("Can only handle AppInstanceStatus")
 	case *types.AppInstanceStatus:
 		status = statusArg.(*types.AppInstanceStatus)
 	}
+	uuidStr := status.UUIDandVersion.UUID.String()
 
-	PublishAppInfoToZedCloud(status)
+	PublishAppInfoToZedCloud(uuidStr, status, publishIteration)
+	publishIteration += 1
+}
+
+func handleDNSModify(statusFilename string,
+	statusArg interface{}) {
+	var status *types.DeviceNetworkStatus
+
+	if statusFilename != "global" {
+		fmt.Printf("handleDNSModify: ignoring %s\n", statusFilename)
+		return
+	}
+	switch statusArg.(type) {
+	default:
+		log.Fatal("Can only handle DeviceNetworkStatus")
+	case *types.DeviceNetworkStatus:
+		status = statusArg.(*types.DeviceNetworkStatus)
+	}
+
+	log.Printf("handleDNSModify for %s\n", statusFilename)
+	globalStatus = *status
+	log.Printf("handleDNSModify done for %s\n", statusFilename)
+}
+
+func handleDNSDelete(statusFilename string) {
+	log.Printf("handleDNSDelete for %s\n", statusFilename)
+
+	if statusFilename != "global" {
+		fmt.Printf("handleDNSDelete: ignoring %s\n", statusFilename)
+		return
+	}
+	globalStatus = types.DeviceNetworkStatus{}
+	log.Printf("handleDNSDelete done for %s\n", statusFilename)
 }
 
 // base os config/status event handlers
@@ -375,7 +424,8 @@ func handleBaseOsCreate(statusFilename string, configArg interface{}) {
 
 	log.Printf("handleBaseOsCreate for %s\n", uuidStr)
 	addOrUpdateBaseOsConfig(uuidStr, *config)
-	PublishDeviceInfoToZedCloud(baseOsStatusMap)
+	PublishDeviceInfoToZedCloud(baseOsStatusMap, publishIteration)
+	publishIteration += 1
 }
 
 // base os config modify event
@@ -414,7 +464,8 @@ func handleBaseOsModify(statusFilename string,
 	writeBaseOsStatus(status, statusFilename)
 
 	addOrUpdateBaseOsConfig(uuidStr, *config)
-	PublishDeviceInfoToZedCloud(baseOsStatusMap)
+	PublishDeviceInfoToZedCloud(baseOsStatusMap, publishIteration)
+	publishIteration += 1
 }
 
 // base os config delete event
@@ -433,7 +484,8 @@ func handleBaseOsDelete(statusFilename string,
 	log.Printf("handleBaseOsDelete for %s\n", status.BaseOsVersion)
 
 	removeBaseOsConfig(status.UUIDandVersion.UUID.String())
-	PublishDeviceInfoToZedCloud(baseOsStatusMap)
+	PublishDeviceInfoToZedCloud(baseOsStatusMap, publishIteration)
+	publishIteration += 1
 }
 
 // certificate config/status event handlers

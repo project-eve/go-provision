@@ -132,7 +132,7 @@ func removeDownloaderConfig(objType string, safename string) {
 		return
 	}
 
-	log.Printf("removeDownloaderConfig for %s, Downloader config map delete\n", key)
+	log.Printf("removeDownloaderConfig for %s, Downloader config map entry delete\n", key)
 	delete(downloaderConfigMap, key)
 
 	configFilename := fmt.Sprintf("%s/%s/config/%s.json",
@@ -155,7 +155,7 @@ func removeDownloaderStatus(objType string, statusFilename string) {
 			key)
 		return
 	}
-	log.Printf("removeDownloaderStatus for %s, Downloader status map delete\n", key)
+	log.Printf("removeDownloaderStatus for %s, Downloader status map entry delete\n", key)
 	delete(downloaderStatusMap, key)
 
 	log.Printf("removeDownloaderStatus done for %s\n", key)
@@ -270,8 +270,9 @@ func checkStorageDownloadStatus(objType string, uuidStr string,
 }
 
 func installDownloadedObjects(objType string, uuidStr string,
-	config []types.StorageConfig, status []types.StorageStatus) {
+	config []types.StorageConfig, status []types.StorageStatus) bool {
 
+	ret := true
 	key := formLookupKey(objType, uuidStr)
 	log.Printf("installDownloadedObjects for %s\n", key)
 
@@ -281,28 +282,23 @@ func installDownloadedObjects(objType string, uuidStr string,
 
 		safename := types.UrlToSafename(sc.DownloadURL, sc.ImageSha256)
 
-		// if final installation directory is defined
-		// and the object is ready for installation
-		if sc.FinalObjDir != "" {
-			if (sc.NeedVerification == false &&
-				ss.State == types.DOWNLOADED) ||
-				ss.State == types.DELIVERED {
+		installDownloadedObject(objType, safename, sc, ss)
 
-				if ret := installDownloadedObject(objType, safename, sc, ss); ret == true {
-					ss.State = types.INSTALLED
-				}
-			}
+		// if something is still not installed, mark accordingly
+		if ss.State != types.INSTALLED {
+			ret = false
 		}
 	}
+	log.Printf("installDownloadedObjects for %s, Done %d\n", key, ret)
+	return ret
 }
 
 // based on download/verification state, if
 // the final installation directory is mentioned,
 // move the object there
 func installDownloadedObject(objType string, safename string,
-	config types.StorageConfig, status *types.StorageStatus) bool {
+	config types.StorageConfig, status *types.StorageStatus) {
 
-	var dstFilename string = config.FinalObjDir
 	var srcFilename string = objectDownloadDirname + "/" + objType
 
 	key := formLookupKey(objType, safename)
@@ -311,51 +307,67 @@ func installDownloadedObject(objType string, safename string,
 
 	// if the object is in downloaded state,
 	// pick from pending directory
-	// if ithe object is n delived state,
+	// if ithe object is n delivered state,
 	//  pick from verified directory
 	switch status.State {
 
+	case types.INSTALLED:
+		log.Printf("installDownloadedObject for %s, already installed\n", key)
+		return
+
 	case types.DOWNLOADED:
-		srcFilename += "/pending/"
+		if config.NeedVerification != false {
+			log.Printf("installDownloadedObject for %s, Pending verification\n",
+				key)
+			return
+		}
+		srcFilename += "/pending"
 		break
 
 	case types.DELIVERED:
-		srcFilename += "/verified/"
+		log.Printf("installDownloadedObject for %s, verified\n", key)
+		srcFilename += "/verified"
 		break
 
 	default:
-		log.Printf("installDownloadedObject for %s, invalid state %d\n", key, status.State)
-		return false
+		log.Printf("installDownloadedObject for %s, still not ready (%d)\n", key, status.State)
+		return
 	}
 
 	if config.ImageSha256 != "" {
-		srcFilename = srcFilename + config.ImageSha256 + "/"
+		srcFilename = srcFilename + "/" + config.ImageSha256
 	}
 
-	srcFilename = srcFilename + safename
+	srcFilename = srcFilename + "/" + safename
 
 	// ensure the file is present
 	if _, err := os.Stat(srcFilename); err != nil {
-		log.Printf("installDownloadedObject for %s, %s file absent(%s)\n", key, srcFilename, err)
-		return false
+		log.Fatal("installDownloadedObject for %s, %s file absent(%s)\n",
+			key, srcFilename, err)
 	}
 
-	// create the destination directory
-	if _, err := os.Stat(dstFilename); err == nil {
-		if err := os.MkdirAll(dstFilename, 0700); err != nil {
-			log.Fatal("installDownloadedObject for %s, Failed directory make %s\n", key, dstFilename)
+	// move to final installation point
+	if config.FinalObjDir != "" {
+
+		var dstFilename string = config.FinalObjDir
+
+		// create the destination directory
+		if _, err := os.Stat(dstFilename); err == nil {
+			if err := os.MkdirAll(dstFilename, 0700); err != nil {
+				log.Fatal("installDownloadedObject for %s, Failed directory make %s\n", key, dstFilename)
+			}
 		}
+
+		dstFilename = dstFilename + "/" + types.SafenameToFilename(safename)
+
+		log.Printf("installDownloadedObject for %s, writing %s to %s\n",
+			key, srcFilename, dstFilename)
+
+		os.Rename(srcFilename, dstFilename)
 	}
 
-	dstFilename = dstFilename + "/" + types.SafenameToFilename(safename)
-
-	log.Printf("installDownloadedObject for %s, writing %s to %s\n", key, srcFilename, dstFilename)
-
-	// move final installation point
-	os.Rename(srcFilename, dstFilename)
 	status.State = types.INSTALLED
-	log.Printf("installDownloadedObject for %s, Done\n", key)
-	return true
+	log.Printf("installDownloadedObject for %s, installation done\n", key)
 }
 
 func writeDownloaderConfig(config types.DownloaderConfig, configFilename string) {

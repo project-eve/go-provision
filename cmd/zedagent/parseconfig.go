@@ -516,9 +516,11 @@ func getCertObjConfig(config types.CertObjConfig,
 	// XXX:FIXME dpath/key/pwd from image storage
 	// should be coming from Drive
 	// also the sha for the cert should be set
-	// for now shortcutting it to only downloader
 	var drive = &types.StorageConfig{
-		DownloadURL:      certUrl,
+		DownloadURL: certUrl,
+		// XXX set IfName to to the FreeUplink[0]? NO
+		// Shouldn't we specify "any" to have the downloader try all?
+		// Or pass an array of the IfNames for all the uplinks?
 		MaxSize:          image.MaxSize,
 		TransportMethod:  image.TransportMethod,
 		Dpath:            "zededa-cert-repo",

@@ -90,8 +90,6 @@ func handleLookUpParam(devConfig *zconfig.EdgeDevConfig) {
 		}
 	}
 
-	var deviceCert tls.Certificate
-
 	// Load device cert
 	deviceCert, err := tls.LoadX509KeyPair(deviceCertName,
 		deviceKeyName)
@@ -130,7 +128,8 @@ func handleLookUpParam(devConfig *zconfig.EdgeDevConfig) {
 	var devUUID uuid.UUID
 	if _, err := os.Stat(uuidFileName); err != nil {
 		// Create and write with initial values
-		devUUID = uuid.NewV4()
+		// XXX ignoring any error
+		devUUID, _ = uuid.NewV4()
 		b := []byte(fmt.Sprintf("%s\n", devUUID))
 		err = ioutil.WriteFile(uuidFileName, b, 0644)
 		if err != nil {

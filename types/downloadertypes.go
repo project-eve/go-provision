@@ -13,6 +13,7 @@ import (
 type DownloaderConfig struct {
 	Safename         string
 	DownloadURL      string
+	IfName           string // If set, restrict download to use this interface
 	TransportMethod  string // Download Method S3/HTTP/SFTP etc.
 	Dpath            string
 	ApiKey           string
@@ -21,8 +22,8 @@ type DownloaderConfig struct {
 	ImageSha256      string // sha256 of immutable image
 	FinalObjDir      string // Final Object Store
 	ObjType          string // appImg/cert/baseOs/Config
-	RefCount         uint   // Zero means can delete file/cancel download
 	NeedVerification bool
+	RefCount         uint // Zero means can delete file/cancel download
 }
 
 func (config DownloaderConfig) VerifyFilename(fileName string) bool {
@@ -52,6 +53,7 @@ type DownloaderStatus struct {
 	RefCount         uint // Zero means not downloaded
 	ObjType          string
 	DownloadURL      string
+	IfName           string
 	ImageSha256      string  // sha256 of immutable image
 	FinalObjDir      string  // Final Object Store
 	State            SwState // DOWNLOADED etc

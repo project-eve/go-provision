@@ -184,13 +184,13 @@ func doCertObjInstall(uuidStr string, config types.CertObjConfig,
 	}
 
 	// install the certs now
-	installDownloadedObjects(certObj, uuidStr, config.StorageConfigList,
-		status.StorageStatusList)
-
-	// Automatically move from DOWNLOADED to INSTALLED
-	status.State = types.INSTALLED
-	changed = true
-	log.Printf("doCertObjInstall for %s, Done\n", uuidStr)
+	if ret := installDownloadedObjects(certObj, uuidStr, config.StorageConfigList,
+		status.StorageStatusList); ret == true {
+		// Automatically move from DOWNLOADED to INSTALLED
+		status.State = types.INSTALLED
+		changed = true
+	}
+	log.Printf("doCertObjInstall for %s, Done %d\n", uuidStr, changed)
 	return changed, true
 }
 
@@ -283,8 +283,6 @@ func doCertObjUninstall(uuidStr string, status *types.CertObjStatus) (bool, bool
 	del := false
 	changed := false
 	removedAll := true
-
-	removedAll = true
 
 	for i, _ := range status.StorageStatusList {
 

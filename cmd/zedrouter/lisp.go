@@ -188,21 +188,25 @@ func createLispConfiglet(lispRunDirname string, isMgmt bool, IID uint32,
 	}
 	defer file2.Close()
 	rlocString := ""
-	for _, u := range globalStatus.Uplink {
-		one := fmt.Sprintf("    rloc {\n        interface = %s\n    }\n", u)
-		rlocString += one
-	}
-	for _, a := range globalStatus.UplinkAddrs {
-		prio := 0
-		// XXX don't generate IPv6 UDP checksum hence lower priority
-		// for now
-		if a.IsLinkLocalUnicast() {
-			prio = 2
-		} else if a.To4() == nil {
-			prio = 255
+	for _, u := range globalStatus.UplinkStatus {
+		if !u.Free {
+			continue
 		}
-		one := fmt.Sprintf("    rloc {\n        address = %s\n        priority = %d\n    }\n", a, prio)
+		one := fmt.Sprintf("    rloc {\n        interface = %s\n    }\n",
+			u.IfName)
 		rlocString += one
+		for _, a := range u.Addrs {
+			prio := 0
+			// XXX We don't generate IPv6 UDP checksum hence lower
+			// priority for now
+			if a.IsLinkLocalUnicast() {
+				prio = 2
+			} else if a.To4() == nil {
+				prio = 255
+			}
+			one := fmt.Sprintf("    rloc {\n        address = %s\n        priority = %d\n    }\n", a, prio)
+			rlocString += one
+		}
 	}
 	for _, ms := range lispServers {
 		if isMgmt {
@@ -226,7 +230,7 @@ func createLispConfiglet(lispRunDirname string, isMgmt bool, IID uint32,
 		file2.WriteString(fmt.Sprintf(lispDBtemplate,
 			IID, EID, IID, tag, tag, rlocString))
 	}
-	updateLisp(lispRunDirname, globalStatus.Uplink)
+	updateLisp(lispRunDirname, globalStatus.UplinkStatus)
 }
 
 func updateLispConfiglet(lispRunDirname string, isMgmt bool, IID uint32,
@@ -263,16 +267,16 @@ func deleteLispConfiglet(lispRunDirname string, isMgmt bool, IID uint32,
 	// cfgPathnameIID := lispRunDirname + "/" +
 	//	strconv.FormatUint(uint64(IID), 10)
 
-	updateLisp(lispRunDirname, globalStatus.Uplink)
+	updateLisp(lispRunDirname, globalStatus.UplinkStatus)
 }
 
-func updateLisp(lispRunDirname string, upLinkIfnames []string) {
-	fmt.Printf("updateLisp: %s %v\n", lispRunDirname, upLinkIfnames)
+func updateLisp(lispRunDirname string, upLinkStatus []types.NetworkUplink) {
+	fmt.Printf("updateLisp: %s %v\n", lispRunDirname, upLinkStatus)
 
 	if deferUpdate {
 		log.Printf("updateLisp deferred\n")
 		deferLispRunDirname = lispRunDirname
-		deferUpLinkIfnames = upLinkIfnames
+		deferUpLinkStatus = upLinkStatus
 		return
 	}
 
@@ -357,13 +361,13 @@ func updateLisp(lispRunDirname string, upLinkIfnames []string) {
 	if eidCount == 0 {
 		stopLisp()
 	} else {
-		restartLisp(upLinkIfnames, devices)
+		restartLisp(upLinkStatus, devices)
 	}
 }
 
 var deferUpdate = false
 var deferLispRunDirname = ""
-var deferUpLinkIfnames []string = nil
+var deferUpLinkStatus []types.NetworkUplink = nil
 
 func handleLispRestart(done bool) {
 	log.Printf("handleLispRestart(%v)\n", done)
@@ -372,9 +376,9 @@ func handleLispRestart(done bool) {
 			deferUpdate = false
 			if deferLispRunDirname != "" {
 				updateLisp(deferLispRunDirname,
-					deferUpLinkIfnames)
+					deferUpLinkStatus)
 				deferLispRunDirname = ""
-				deferUpLinkIfnames = nil
+				deferUpLinkStatus = nil
 			}
 		}
 	} else {
@@ -382,14 +386,29 @@ func handleLispRestart(done bool) {
 	}
 }
 
-func restartLisp(upLinkIfnames []string, devices string) {
+func restartLisp(upLinkStatus []types.NetworkUplink, devices string) {
 	log.Printf("restartLisp: %v %s\n",
-		upLinkIfnames, devices)
+		upLinkStatus, devices)
+	if len(upLinkStatus) == 0 {
+		log.Printf("Can not restart lisp with no uplinks\n")
+		return
+	}
+	// XXX hack to avoid hang in pslisp on Erik's laptop
+	if broken {
+		// Issue pkill -f lisp-core.pyo
+		log.Printf("Calling pkill -f lisp-core.pyo\n")
+		cmd := wrap.Command("pkill", "-f", "lisp-core.pyo")
+		stdoutStderr, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Println("pkill failed ", err)
+			log.Printf("pkill output %s\n", string(stdoutStderr))
+		}
+	}
 	// XXX how to restart with multiple uplinks?
 	args := []string{
 		RestartCmd,
 		"8080",
-		upLinkIfnames[0],
+		upLinkStatus[0].IfName,
 	}
 	itrTimeout := 1
 	cmd := wrap.Command(RestartCmd)
@@ -419,7 +438,7 @@ func restartLisp(upLinkIfnames []string, devices string) {
 		"%s 8080 %s\n"
 	// XXX how to restart with multiple uplinks?
 	b := []byte(fmt.Sprintf(RLTemplate, devices, itrTimeout, RestartCmd,
-		upLinkIfnames[0]))
+		upLinkStatus[0].IfName))
 	err = ioutil.WriteFile(RLFilename, b, 0744)
 	if err != nil {
 		log.Fatal("WriteFile", err, RLFilename)
@@ -430,6 +449,18 @@ func restartLisp(upLinkIfnames []string, devices string) {
 
 func stopLisp() {
 	log.Printf("stopLisp\n")
+	// XXX hack to avoid hang in pslisp on Erik's laptop
+	if broken {
+		// Issue pkill -f lisp-core.pyo
+		log.Printf("Calling pkill -f lisp-core.pyo\n")
+		cmd := wrap.Command("pkill", "-f", "lisp-core.pyo")
+		stdoutStderr, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Println("pkill failed ", err)
+			log.Printf("pkill output %s\n", string(stdoutStderr))
+		}
+	}
+
 	cmd := wrap.Command(StopCmd)
 	env := os.Environ()
 	env = append(env, fmt.Sprintf("LISP_NO_IPTABLES="))

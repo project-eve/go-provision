@@ -229,13 +229,14 @@ func doBaseOsInstall(uuidStr string, config types.BaseOsConfig,
 	}
 
 	// install the objects at appropriate place
-	installDownloadedObjects(baseOsObj, uuidStr, config.StorageConfigList,
-		status.StorageStatusList)
+	if ret := installDownloadedObjects(baseOsObj, uuidStr, config.StorageConfigList,
+		status.StorageStatusList); ret == true {
+		// move the state from DELIVERED to INSTALLED
+		status.State = types.INSTALLED
+		changed = true
+	}
 
-	// move the state from DELIVERED to INSTALLED
-	status.State = types.INSTALLED
-	changed = true
-	log.Printf("doBaseOsInstall for %s, Done\n", uuidStr)
+	log.Printf("doBaseOsInstall for %s, Done %d\n", uuidStr, changed)
 	return changed, true
 }
 

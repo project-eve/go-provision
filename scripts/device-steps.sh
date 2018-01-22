@@ -120,6 +120,8 @@ fi
 # Ideally just to WiFi setup in dom0 and do DHCP in domZ
 
 if [ $SELF_REGISTER = 1 ]; then
+    rm -f $ETCDIR/zedrouterconfig.json
+    
     touch $ETCDIR/self-register-failed
     echo "Self-registering our device certificate at " `date`
     if [ ! \( -f $ETCDIR/onboard.cert.pem -a -f $ETCDIR/onboard.key.pem \) ]; then
@@ -162,8 +164,12 @@ if [ ! -d $LISPDIR ]; then
     exit 1
 fi
 
-if [ -f /var/tmp/zedrouter/config/global ]; then
-   cp -p /var/tmp/zedrouter/config/global $ETCDIR/network.config.global
+# We use the factory network.config.static if we have one, otherwise
+# we reuse the DeviceNetworkConfig from a previous run
+if [ -f $ETCDIR/network.config.static ] ; then
+    cp $ETCDIR/network.config.static $ETCDIR/network.config.global
+elif [ -f /var/tmp/zededa/DeviceNetworkConfig/global.json ]; then
+    cp -p /var/tmp/zededa/DeviceNetworkConfig/global.json $ETCDIR/network.config.global
 fi
 
 echo "Removing old stale files"
@@ -177,7 +183,7 @@ echo "Removing old zedmanager status files"
 rm -rf /var/run/zedmanager/status/*.json
 # The following is a workaround for a racecondition between different agents
 # Make sure we have the required directories in place
-DIRS="/var/tmp/domainmgr/config/ /var/tmp/verifier/config/ /var/tmp/downloader/config/ /var/tmp/zedmanager/config/ /var/tmp/identitymgr/config/ /var/tmp/zedrouter/config/ /var/run/domainmgr/status/ /var/run/verifier/status/ /var/run/downloader/status/ /var/run/zedmanager/status/ /var/run/eidregister/status/ /var/run/zedrouter/status/ /var/run/identitymgr/status/"
+DIRS="/var/tmp/domainmgr/config/ /var/tmp/verifier/config/ /var/tmp/downloader/config/ /var/tmp/zedmanager/config/ /var/tmp/identitymgr/config/ /var/tmp/zedrouter/config/ /var/run/domainmgr/status/ /var/run/verifier/status/ /var/run/downloader/status/ /var/run/zedmanager/status/ /var/run/eidregister/status/ /var/run/zedrouter/status/ /var/run/identitymgr/status/ /var/tmp/zededa/DeviceNetworkConfig/ /var/run/zedrouter/DeviceNetworkStatus/"
 for d in $DIRS; do
     mkdir -p $d
     chmod 700 $d `dirname $d`
@@ -295,8 +301,11 @@ for l in $LOGGERS; do
 done
 
 if [ $SELF_REGISTER = 1 ]; then
-	rm -f $ETCDIR/zedrouterconfig.json
-    
+    # Do we have a file from the build?
+    if [ -f $ETCDIR/network.config.static ] ; then
+	cp $ETCDIR/network.config.static $ETCDIR/network.config.global
+    else
+	echo "Determining uplink interface"
 	intf=`$BINDIR/find-uplink.sh $ETCDIR/lisp.config.base`
 	if [ "$intf" != "" ]; then
 		echo "Found interface $intf based on route to map servers"
@@ -304,35 +313,53 @@ if [ $SELF_REGISTER = 1 ]; then
 		echo "NOT Found interface based on route to map servers. Giving up"
 		exit 1    
 	fi
-	echo "Determining uplink interface"
-# XXX this doesn't run on update; handle both formats in json?
 	cat <<EOF >$ETCDIR/network.config.global
-{"Uplink":["$intf"]}
+{"Uplink":["$intf"], "FreeUplinks":["$intf"]}
 EOF
-
-	# Make sure we set the dom0 hostname, used by LISP nat traversal, to
-	# a unique string. Using the uuid
-	uuid=`cat $ETCDIR/uuid`
-	echo "Setting hostname to $uuid"
-	/bin/hostname $uuid
-	/bin/hostname >/etc/hostname
+    fi
+    # Make sure we set the dom0 hostname, used by LISP nat traversal, to
+    # a unique string. Using the uuid
+    uuid=`cat $ETCDIR/uuid`
+    echo "Setting hostname to $uuid"
+    /bin/hostname $uuid
+    /bin/hostname >/etc/hostname
+    # put the uuid in /etc/hosts to avoid complaints
+    echo "Adding $uuid to /etc/hosts"
+    echo "127.0.0.1 $uuid" >>/etc/hosts
+else
+    uuid=`cat $ETCDIR/uuid`
+    # For safety in case the rootfs was duplicated and /etc/hostame wasn't
+    # updated
+    /bin/hostname $uuid
+    /bin/hostname >/etc/hostname
+    grep -q $uuid /etc/hosts
+    if [ !? = 1 ]; then
 	# put the uuid in /etc/hosts to avoid complaints
 	echo "Adding $uuid to /etc/hosts"
 	echo "127.0.0.1 $uuid" >>/etc/hosts
-else
-	uuid=`cat $ETCDIR/uuid`
-	# For safety in case the rootfs was duplicated and /etc/hostame wasn't
-	# updated
-	/bin/hostname $uuid
-	/bin/hostname >/etc/hostname
-	grep -s $uuid /etc/hosts >/dev/null
-	if [ !? = 1 ]; then
-		# put the uuid in /etc/hosts to avoid complaints
-		echo "Adding $uuid to /etc/hosts"
-		echo "127.0.0.1 $uuid" >>/etc/hosts
+    else
+	echo "Found $uuid in /etc/hosts"
+    fi
+    # Handle old file format
+    grep -q FreeUplinks $ETCDIR/network.config.global
+    if [ !? = 0 ]; then
+	echo "Found FreeUplinks in $ETCDIR/network.config.global"
+    else
+	echo "Determining uplink interface"
+	intf=`$BINDIR/find-uplink.sh $ETCDIR/lisp.config.base`
+	if [ "$intf" != "" ]; then
+		echo "Found interface $intf based on route to map servers"
 	else
-		echo "Found $uuid in /etc/hosts"
+		echo "NOT Found interface based on route to map servers. Giving up"
+		exit 1    
 	fi
+	cat <<EOF >$ETCDIR/network.config.global
+{"Uplink":["$intf"], "FreeUplinks":["$intf"]}
+EOF
+    fi
+    # XXX
+    echo "Content of file is:"
+    cat $ETCDIR/network.config.global
 fi
 
 # Need a key for device-to-device map-requests
@@ -345,7 +372,7 @@ if [ -f $ETCDIR/zedrouterconfig.json ]; then
 	cp $ETCDIR/zedrouterconfig.json /var/tmp/zedrouter/config/${uuid}.json
 fi
 
-cp $ETCDIR/network.config.global /var/tmp/zedrouter/config/global
+cp $ETCDIR/network.config.global /var/tmp/zededa/DeviceNetworkConfig/global.json
 
 # Setup default amount of space for images
 echo '{"MaxSpace":2000000}' >/var/tmp/downloader/config/global 
