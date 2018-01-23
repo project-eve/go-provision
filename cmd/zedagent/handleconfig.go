@@ -107,7 +107,7 @@ func configTimerTask() {
 	ret := getLatestConfigDigest(digestUrl, configSha, iteration)
 
 	if ret != nil {
-		configSha = string(ret.Digest[0].ConfigSha256)
+		configSha = ret.ConfigHash
 	}
 
 	ticker := time.NewTicker(time.Minute * configTickTimeout)
@@ -117,26 +117,16 @@ func configTimerTask() {
 		iteration += 1
 		ret := getLatestConfigDigest(digestUrl, configSha, iteration)
 		if ret != nil {
-			configSha = string(ret.Digest[0].ConfigSha256)
+			configSha = ret.ConfigHash
 		}
 	}
 }
 
-func getLatestConfigDigest(digestUrl string, configSha string, iteration int) *zconfig.EdgeDevConfList {
+func getLatestConfigDigest(digestUrl string, configSha string, iteration int) *zconfig.ConfigResponse {
 
-	var configPath string = ""
-
-	var requestDigest = &zconfig.EdgeDevConfList{}
-	requestDigest.Digest = make([]*zconfig.EdgeDevConfigDigest, 1)
-
-	digest := new(zconfig.EdgeDevConfigDigest)
-
-	// only one root level config sha for now
-	digest.ConfigPath   = []byte(configPath)
-	digest.ConfigSha256 = []byte(configSha)
-	requestDigest.Digest[0] = digest
-
-	data, err := proto.Marshal(requestDigest)
+	configRequest := &zconfig.ConfigHash{}
+	configRequest.ConfigHash = *proto.String(configSha)
+	data, err := proto.Marshal(configRequest)
 	if err != nil {
 		fmt.Println("marshaling error: ", err)
 		return nil
@@ -176,17 +166,17 @@ func getLatestConfigDigest(digestUrl string, configSha string, iteration int) *z
 		}
 		defer resp.Body.Close()
 		if err := validateConfigDigestMessage(resp); err != nil {
-			log.Println("validateConfigDigestMessage: ", err)
+			log.Printf("validateConfigDigestMessage: %s\n", err)
 			return nil
 		}
-		configDigest, err := readDeviceConfigDigestProtoMessage(resp)
+		configResponse, err := readDeviceConfigDigestProtoMessage(resp)
 		if err != nil {
-			log.Println("readDeviceConfigDigestProtoMessage: ", err)
+			log.Printf("readDeviceConfigDigestProtoMessage: %s\n", err)
 			return nil
 		}
 		// XXX:FIXME, implement the diff-logic, here
-		inhaleDeviceConfig(configDigest.Config)
-		return configDigest
+		inhaleDeviceConfig(configResponse.Config)
+		return configResponse
 	}
 	log.Printf("All attempts to connect to %s using intf %s failed\n",
 		digestUrl, intf)
@@ -307,23 +297,21 @@ func validateConfigMessage(r *http.Response) error {
 	}
 }
 
-func readDeviceConfigDigestProtoMessage(r *http.Response) (*zconfig.EdgeDevConfList, error) {
+func readDeviceConfigDigestProtoMessage(r *http.Response) (*zconfig.ConfigResponse, error) {
 
-	var configDigest = &zconfig.EdgeDevConfList{}
+	var configResponse = &zconfig.ConfigResponse{}
 
 	bytes, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		fmt.Println(err)
 		return nil, err
 	}
-	//log.Println(" proto bytes(config) received from cloud: ", fmt.Sprintf("%s",bytes))
-	log.Printf("parsing proto %d bytes\n", len(bytes))
-	err = proto.Unmarshal(bytes, configDigest)
+	err = proto.Unmarshal(bytes, configResponse)
 	if err != nil {
-		log.Println("Unmarshalling failed: %v", err)
+		log.Printf("Unmarshalling failed: %v\n", err)
 		return nil, err
 	}
-	return configDigest, nil
+	return configResponse, nil
 }
 
 func readDeviceConfigProtoMessage(r *http.Response) (*zconfig.EdgeDevConfig, error) {
