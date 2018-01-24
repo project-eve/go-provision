@@ -37,24 +37,26 @@ import (
 	"zc/libs/zedUpload"
 	"io/ioutil"
 	"log"
+	"net"
 	"os"
 	"time"
 )
 
 const (
-	baseDirname = "/var/tmp/downloader"
-	runDirname = "/var/run/downloader"
-	configDirname = baseDirname + "/config"
-	statusDirname = runDirname + "/status"
-	certBaseDirname = "/var/tmp/downloader/cert.obj"
-	certRunDirname = "/var/run/downloader/cert.obj"
-	certConfigDirname = certBaseDirname + "/config"
-	certStatusDirname = certRunDirname + "/status"
-	imgCatalogDirname = "/var/tmp/zedmanager/downloads"
-	pendingDirname = imgCatalogDirname + "/pending"
-	verifierDirname = imgCatalogDirname + "/verifier"
-	finalDirname = imgCatalogDirname + "/verified"
+	baseDirname        = "/var/tmp/downloader"
+	runDirname         = "/var/run/downloader"
+	configDirname      = baseDirname + "/config"
+	statusDirname      = runDirname + "/status"
+	certBaseDirname    = "/var/tmp/downloader/cert.obj"
+	certRunDirname     = "/var/run/downloader/cert.obj"
+	certConfigDirname  = certBaseDirname + "/config"
+	certStatusDirname  = certRunDirname + "/status"
+	imgCatalogDirname  = "/var/tmp/zedmanager/downloads"
+	pendingDirname     = imgCatalogDirname + "/pending"
+	verifierDirname    = imgCatalogDirname + "/verifier"
+	finalDirname       = imgCatalogDirname + "/verified"
 	certificateDirname = "/var/tmp/zedmanager/certs"
+	DNSDirname         = "/var/run/zedrouter/DeviceNetworkStatus"
 )
 
 // XXX remove global variables
@@ -64,6 +66,8 @@ var (
 
 // Set from Makefile
 var Version = "No version specified"
+
+var deviceNetworkStatus types.DeviceNetworkStatus
 
 func main() {
 	log.SetOutput(os.Stdout)
@@ -91,16 +95,26 @@ func checkImageUpdates() {
 	fileChanges := make(chan string)
 
 	go watch.WatchConfigStatus(configDirname, statusDirname, fileChanges)
+	deviceStatusChanges := make(chan string)
+	go watch.WatchStatus(DNSDirname, deviceStatusChanges)
 
 	for {
-		change := <-fileChanges
-
-		watch.HandleConfigStatusEvent(change, configDirname, statusDirname,
-			&types.DownloaderConfig{},
-			&types.DownloaderStatus{},
-			handleImageCreate,
-			handleImageModify,
-			handleImageDelete, nil)
+		select {
+		case change := <-fileChanges:
+			watch.HandleConfigStatusEvent(change, configDirname,
+				statusDirname,
+				&types.DownloaderConfig{},
+				&types.DownloaderStatus{},
+				handleImageCreate,
+				handleImageModify,
+				handleImageDelete, nil)
+		case change := <-deviceStatusChanges:
+			watch.HandleStatusEvent(change,
+				DNSDirname,
+				&types.DeviceNetworkStatus{},
+				handleDNSModify, handleDNSDelete,
+				nil)
+		}
 	}
 }
 
@@ -113,15 +127,16 @@ func handleCertUpdates() {
 		fileChanges)
 
 	for {
-		change := <-fileChanges
-
-		watch.HandleConfigStatusEvent(change,
-			certConfigDirname, certStatusDirname,
-			&types.DownloaderConfig{},
-			&types.DownloaderStatus{},
-			handleCertObjCreate,
-			handleCertObjModify,
-			handleCertObjDelete, nil)
+		select {
+		case change := <-fileChanges:
+			watch.HandleConfigStatusEvent(change,
+				certConfigDirname, certStatusDirname,
+				&types.DownloaderConfig{},
+				&types.DownloaderStatus{},
+				handleCertObjCreate,
+				handleCertObjModify,
+				handleCertObjDelete, nil)
+		}
 	}
 }
 
@@ -298,6 +313,7 @@ func processCertObject(config types.DownloaderConfig, statusFilename string) {
 	}
 }
 
+// TODO with a context to handle* we can pass in the dCtx in the context.
 func handleCreate(config types.DownloaderConfig, statusFilename string) {
 
 	var syncOp zedUpload.SyncOpType = zedUpload.SyncOpDownload
@@ -307,7 +323,7 @@ func handleCreate(config types.DownloaderConfig, statusFilename string) {
 		Safename:       config.Safename,
 		RefCount:       config.RefCount,
 		DownloadURL:    config.DownloadURL,
-		IfName:		config.IfName,
+		IfName:         config.IfName,
 		ImageSha256:    config.ImageSha256,
 		DownloadObjDir: config.DownloadObjDir,
 		VerifiedObjDir: config.VerifiedObjDir,
@@ -745,7 +761,7 @@ func handleSyncOp(syncOp zedUpload.SyncOpType,
 
 	var err error
 	var locFilename string
-	
+
 	locDirname := imgCatalogDirname
 	if config.DownloadObjDir != "" {
 		locDirname = config.DownloadObjDir
@@ -773,6 +789,22 @@ func handleSyncOp(syncOp zedUpload.SyncOpType,
 
 	log.Printf("Downloading <%s> to <%s>\n", config.DownloadURL, locFilename)
 
+	var ipSrc net.IP
+	retryCount := 0 // XXX
+	if config.IfName != "" {
+		// XXX need to pick a random source
+		// until we find one which works.
+		// XXX put retryCount in status? Loop?
+		ipSrc, err = types.GetLocalAddrFree(deviceNetworkStatus,
+			retryCount, config.IfName)
+		if err != nil {
+			ipSrc = net.IP{}
+		}
+		fmt.Printf("Using IP source %v\n", ipSrc)
+	} else {
+		// Use unspecified even if dCtx has an old source address
+		ipSrc = net.IP{}
+	}
 	switch config.TransportMethod {
 	case zconfig.DsType_DsS3.String():
 		{
@@ -789,6 +821,7 @@ func handleSyncOp(syncOp zedUpload.SyncOpType,
 			dEndPoint, err := dCtx.NewSyncerDest(trType, region, config.Dpath, auth)
 
 			if err == nil && dEndPoint != nil {
+				dEndPoint.WithSrcIpSelection(ipSrc)
 				var respChan = make(chan *zedUpload.DronaRequest)
 
 				log.Printf("syncOp for <%s>/<%s>\n", config.Dpath, filename)
@@ -904,4 +937,35 @@ func handleSyncOpResponse(config types.DownloaderConfig,
 	status.PendingAdd = false
 	status.State = types.DOWNLOADED
 	writeDownloaderStatus(status, statusFilename)
+}
+
+func handleDNSModify(statusFilename string,
+	statusArg interface{}) {
+	var status *types.DeviceNetworkStatus
+
+	if statusFilename != "global" {
+		fmt.Printf("handleDNSModify: ignoring %s\n", statusFilename)
+		return
+	}
+	switch statusArg.(type) {
+	default:
+		log.Fatal("Can only handle DeviceNetworkStatus")
+	case *types.DeviceNetworkStatus:
+		status = statusArg.(*types.DeviceNetworkStatus)
+	}
+
+	log.Printf("handleDNSModify for %s\n", statusFilename)
+	deviceNetworkStatus = *status
+	log.Printf("handleDNSModify done for %s\n", statusFilename)
+}
+
+func handleDNSDelete(statusFilename string) {
+	log.Printf("handleDNSDelete for %s\n", statusFilename)
+
+	if statusFilename != "global" {
+		fmt.Printf("handleDNSDelete: ignoring %s\n", statusFilename)
+		return
+	}
+	deviceNetworkStatus = types.DeviceNetworkStatus{}
+	log.Printf("handleDNSDelete done for %s\n", statusFilename)
 }
