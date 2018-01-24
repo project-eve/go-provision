@@ -3,8 +3,8 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"github.com/golang/protobuf/ptypes"
 	"github.com/golang/protobuf/proto"
+	"github.com/golang/protobuf/ptypes"
 	"github.com/shirou/gopsutil/cpu"
 	"github.com/shirou/gopsutil/disk"
 	"github.com/shirou/gopsutil/host"
@@ -210,97 +210,118 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 		SendMetricsProtobufStrThroughHttp(ReportMetrics, iteration)
 		return
 	}
-	if len(cpuStorageStat) > 1 {
-		log.Println("domu has been spawned....so we will report it's metrics")
-		ReportMetrics.Am = make([]*zmet.AppMetric, len(cpuStorageStat)-1)
-		var countApp int
-		countApp = 0
-		for appArr := 2; appArr < len(cpuStorageStat)+1; appArr++ {
-			ReportAppMetric := new(zmet.AppMetric)
-			ReportAppMetric.Cpu = new(zmet.AppCpuMetric)
-			ReportAppMetric.Memory = new(zmet.MemoryMetric)
-
-			ReportAppMetric.AppName = cpuStorageStat[appArr][1]
-
-			appCpuUpTime, _ := strconv.ParseUint(cpuStorageStat[appArr][3], 10, 0)
-			ReportAppMetric.Cpu.UpTime = *proto.Uint32(uint32(appCpuUpTime))
-			appCpuUsedInPercent, _ := strconv.ParseFloat(cpuStorageStat[appArr][4], 10)
-			ReportAppMetric.Cpu.CpuUtilization = *proto.Float64(float64(appCpuUsedInPercent))
-
-			totalAppMemory, _ := strconv.ParseUint(cpuStorageStat[appArr][5], 10, 0)
-			usedAppMemoryPercent, _ := strconv.ParseUint(cpuStorageStat[appArr][6], 10, 0)
-			usedMemory := ((totalAppMemory) * (usedAppMemoryPercent)) / 100
-			availableMemory := totalAppMemory - usedMemory
-			availableAppMemoryPercent := 100 - usedAppMemoryPercent
-
-			ReportAppMetric.Memory.UsedMem = uint32(usedMemory)
-			ReportAppMetric.Memory.AvailMem = uint32(availableMemory)
-			ReportAppMetric.Memory.UsedPercentage = float64(usedAppMemoryPercent)
-			ReportAppMetric.Memory.AvailPercentage = float64(availableAppMemoryPercent)
-
-			ReportMetrics.Am[countApp] = ReportAppMetric
-			countApp++
-		}
-	}
-	for arr := 1; arr < 2; arr++ {
-
-		cpuTime, _ := strconv.ParseUint(cpuStorageStat[arr][3], 10, 0)
-		ReportDeviceMetric.Cpu.UpTime = *proto.Uint32(uint32(cpuTime))
-		cpuUsedInPercent, _ := strconv.ParseFloat(cpuStorageStat[arr][4], 10)
-		ReportDeviceMetric.Cpu.CpuUtilization = *proto.Float64(float64(cpuUsedInPercent))
-
-		cpuDetail, err := cpu.Times(true)
-		if err != nil {
-			log.Println("error while fetching cpu related time: ", err)
-		} else {
-			for _, cpuStat := range cpuDetail {
-				ReportDeviceMetric.Cpu.Usr = cpuStat.User
-				ReportDeviceMetric.Cpu.Nice = cpuStat.Nice
-				ReportDeviceMetric.Cpu.System = cpuStat.System
-				ReportDeviceMetric.Cpu.Io = cpuStat.Irq
-				ReportDeviceMetric.Cpu.Irq = cpuStat.Irq
-				ReportDeviceMetric.Cpu.Soft = cpuStat.Softirq
-				ReportDeviceMetric.Cpu.Steal = cpuStat.Steal
-				ReportDeviceMetric.Cpu.Guest = cpuStat.Guest
-				ReportDeviceMetric.Cpu.Idle = cpuStat.Idle
+	log.Println("length of cpuStorageStat is: ", len(cpuStorageStat))
+	log.Println("value cpuStorageStat is: ", cpuStorageStat)
+	for arr := 1; arr < len(cpuStorageStat); arr++ {
+		if strings.Contains(cpuStorageStat[arr][1], "Domain-0") {
+			cpuTime, _ := strconv.ParseUint(cpuStorageStat[arr][3], 10, 0)
+			ReportDeviceMetric.Cpu.UpTime = *proto.Uint32(uint32(cpuTime))
+			cpuUsedInPercent, _ := strconv.ParseFloat(cpuStorageStat[arr][4], 10)
+			ReportDeviceMetric.Cpu.CpuUtilization = *proto.Float64(float64(cpuUsedInPercent))
+			cpuDetail, err := cpu.Times(true)
+			if err != nil {
+				log.Println("error while fetching cpu related time: ", err)
+			} else {
+				for _, cpuStat := range cpuDetail {
+					ReportDeviceMetric.Cpu.Usr = cpuStat.User
+					ReportDeviceMetric.Cpu.Nice = cpuStat.Nice
+					ReportDeviceMetric.Cpu.System = cpuStat.System
+					ReportDeviceMetric.Cpu.Io = cpuStat.Irq
+					ReportDeviceMetric.Cpu.Irq = cpuStat.Irq
+					ReportDeviceMetric.Cpu.Soft = cpuStat.Softirq
+					ReportDeviceMetric.Cpu.Steal = cpuStat.Steal
+					ReportDeviceMetric.Cpu.Guest = cpuStat.Guest
+					ReportDeviceMetric.Cpu.Idle = cpuStat.Idle
+				}
 			}
-		}
-		//memory related info for dom0...XXX later we will add for domU also..
-		ram, err := mem.VirtualMemory()
-		if err != nil {
-			log.Println(err)
+			//memory related info for dom0...XXX later we will add for domU also..
+			ram, err := mem.VirtualMemory()
+			if err != nil {
+				log.Println(err)
+			} else {
+				ReportDeviceMetric.Memory.UsedMem = uint32(ram.Used)
+				ReportDeviceMetric.Memory.AvailMem = uint32(ram.Available)
+				ReportDeviceMetric.Memory.UsedPercentage = ram.UsedPercent
+				ReportDeviceMetric.Memory.AvailPercentage = (100.0 - (ram.UsedPercent))
+			}
+			//find network related info...
+			network, err := psutilnet.IOCounters(true)
+			if err != nil {
+				log.Println(err)
+			} else {
+				ReportDeviceMetric.Network = make([]*zmet.NetworkMetric, len(network))
+				for netx, networkInfo := range network {
+					networkDetails := new(zmet.NetworkMetric)
+					networkDetails.IName = networkInfo.Name
+					networkDetails.TxBytes = networkInfo.PacketsSent
+					networkDetails.RxBytes = networkInfo.PacketsRecv
+					networkDetails.TxDrops = networkInfo.Dropout
+					networkDetails.RxDrops = networkInfo.Dropin
+					//networkDetails.TxRate = //XXX TBD
+					//networkDetails.RxRate = //XXX TBD
+					ReportDeviceMetric.Network[netx] = networkDetails
+				}
+			}
+			ReportMetrics.MetricContent = new(zmet.ZMetricMsg_Dm)
+			if x, ok := ReportMetrics.GetMetricContent().(*zmet.ZMetricMsg_Dm); ok {
+				x.Dm = ReportDeviceMetric
+			}
 		} else {
-			ReportDeviceMetric.Memory.UsedMem = uint32(ram.Used)
-			ReportDeviceMetric.Memory.AvailMem = uint32(ram.Available)
-			ReportDeviceMetric.Memory.UsedPercentage = ram.UsedPercent
-			ReportDeviceMetric.Memory.AvailPercentage = (100.0 - (ram.UsedPercent))
-		}
-		//find network related info...
-		network, err := psutilnet.IOCounters(true)
-		if err != nil {
-			log.Println(err)
-		} else {
-			ReportDeviceMetric.Network = make([]*zmet.NetworkMetric, len(network))
-			for netx, networkInfo := range network {
+
+			if len(cpuStorageStat) > 2 {
+				log.Println("domu has been spawned....so we will report it's metrics")
+				ReportMetrics.Am = make([]*zmet.AppMetric, len(cpuStorageStat)-2)
+				var countApp int
+				countApp = 0
+				ReportAppMetric := new(zmet.AppMetric)
+				ReportAppMetric.Cpu = new(zmet.AppCpuMetric)
+				ReportAppMetric.Memory = new(zmet.MemoryMetric)
+
+				ReportAppMetric.AppName = cpuStorageStat[arr][1]
+
+				//appCpuUpTime, _ := strconv.ParseUint(cpuStorageStat[appArr][3], 10, 0)//XXX FIXME
+				//ReportAppMetric.Cpu.UpTime = *proto.Uint32(uint32(appCpuUpTime)) //XXX FIXME
+
+				appCpuUpTime, _ := strconv.ParseUint(cpuStorageStat[arr][3], 10, 0) //XXX FIXME
+				ReportAppMetric.Cpu.CpuTotal = *proto.Uint32(uint32(appCpuUpTime))  //XXX FIXME
+				appCpuUsedInPercent, _ := strconv.ParseFloat(cpuStorageStat[arr][4], 10)
+				ReportAppMetric.Cpu.CpuPercentage = *proto.Float64(float64(appCpuUsedInPercent))
+
+				totalAppMemory, _ := strconv.ParseUint(cpuStorageStat[arr][5], 10, 0)
+				log.Println("totalAppMemory: ", totalAppMemory)
+				usedAppMemoryPercent, _ := strconv.ParseFloat(cpuStorageStat[arr][6], 10)
+				log.Println("usedAppMemoryPercent: ", usedAppMemoryPercent)
+				usedMemory := (float64(totalAppMemory) * (usedAppMemoryPercent)) / 100
+				log.Println("usedMemory: ", usedMemory)
+				availableMemory := float64(totalAppMemory) - usedMemory
+				log.Println("availableMemory: ", availableMemory)
+				availableAppMemoryPercent := 100 - usedAppMemoryPercent
+				log.Println("availableAppMemoryPercent: ", availableAppMemoryPercent)
+
+				ReportAppMetric.Memory.UsedMem = uint32(usedMemory)
+				ReportAppMetric.Memory.AvailMem = uint32(availableMemory)
+				ReportAppMetric.Memory.UsedPercentage = float64(usedAppMemoryPercent)
+				ReportAppMetric.Memory.AvailPercentage = float64(availableAppMemoryPercent)
+
+				//XXX FIXME network info for domu...
+				ReportAppMetric.Network = make([]*zmet.NetworkMetric, 1)
 				networkDetails := new(zmet.NetworkMetric)
-				networkDetails.IName = networkInfo.Name
-				networkDetails.TxBytes = networkInfo.PacketsSent
-				networkDetails.RxBytes = networkInfo.PacketsRecv
-				networkDetails.TxDrops = networkInfo.Dropout
-				networkDetails.RxDrops = networkInfo.Dropin
+				// networkDetails.IName =
+				appNetworkTx, _ := strconv.ParseUint(cpuStorageStat[arr][11], 10, 0)
+				networkDetails.TxBytes = uint64(appNetworkTx)
+				appNetworkRx, _ := strconv.ParseUint(cpuStorageStat[arr][12], 10, 0)
+				networkDetails.RxBytes = uint64(appNetworkRx)
+				//networkDetails.TxDrops = networkInfo.Dropout
+				//networkDetails.RxDrops = networkInfo.Dropin
 				//networkDetails.TxRate = //XXX TBD
 				//networkDetails.RxRate = //XXX TBD
-				ReportDeviceMetric.Network[netx] = networkDetails
+				ReportAppMetric.Network[0] = networkDetails
+				ReportMetrics.Am[countApp] = ReportAppMetric
+				countApp++
 			}
-		}
-		//devAndAppMetric.Dm = ReportDeviceMetric
-        //ReportMetrics.DevAndAppMetrics = devAndAppMetric
-		ReportMetrics.MetricContent = new(zmet.ZMetricMsg_Dm)
-		if x, ok := ReportMetrics.GetMetricContent().(*zmet.ZMetricMsg_Dm); ok {
-			x.Dm = ReportDeviceMetric
+
 		}
 	}
-
 	log.Printf("Metrics: %s\n", ReportMetrics)
 	SendMetricsProtobufStrThroughHttp(ReportMetrics, iteration)
 }

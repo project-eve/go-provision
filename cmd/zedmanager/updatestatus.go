@@ -479,7 +479,7 @@ func doActivate(uuidStr string, config types.AppInstanceConfig,
 	ns, err := LookupAppNetworkStatus(uuidStr)
 	if err != nil {
 		log.Printf("Waiting for AppNetworkStatus for %s\n", uuidStr)
-		return changed
+	//	return changed
 	}
 	log.Printf("Done with AppNetworkStatus for %s\n", uuidStr)
 
