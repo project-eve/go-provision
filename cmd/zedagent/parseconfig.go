@@ -10,6 +10,8 @@ import (
 	"log"
 	"net"
 	"strings"
+	"syscall"
+	"time"
 )
 
 const (
@@ -25,11 +27,16 @@ const (
 	certificateDirname   = "/var/tmp/zedmanager/certs"
 )
 
+var rebootConfig, backupConfig *zconfig.DeviceOpsCmd
+var rebootTimer, backupTimer *time.Timer
+
 func parseConfig(config *zconfig.EdgeDevConfig) {
 
 	var appInstance = types.AppInstanceConfig{}
 
 	log.Println("Applying new config")
+
+	parseOpCmds(config)
 
 	Apps := config.GetApps()
 
@@ -115,6 +122,116 @@ func parseConfig(config *zconfig.EdgeDevConfig) {
 		appFilename := cfgApp.Uuidandversion.Uuid
 		writeAppInstance(appInstance, appFilename)
 	}
+}
+
+func parseOpCmds(config *zconfig.EdgeDevConfig) {
+
+	scheduleReboot(config.Reboot)
+	scheduleBackup(config.Backup)
+}
+
+func scheduleReboot(reboot *zconfig.DeviceOpsCmd) {
+
+	if reboot == nil {
+
+		// stop the timer
+		if rebootTimer != nil {
+			rebootTimer.Stop()
+		}
+		rebootConfig = nil
+		return
+	}
+
+	log.Printf("Reboot Config: %v\n", reboot)
+
+	if rebootConfig == nil {
+		rebootConfig = &zconfig.DeviceOpsCmd{}
+	}
+
+	// time counter value has changed
+	if (rebootConfig == nil) ||
+		(rebootConfig.Counter != reboot.Counter) {
+
+		//timer was started, stop now
+		if rebootTimer != nil {
+			rebootTimer.Stop()
+		}
+
+		// start the timer again
+		duration := time.Duration(reboot.Counter)
+		rebootTimer = time.NewTimer(time.Second * duration)
+
+		go handleReboot()
+	}
+
+	// store current config
+	rebootConfig = reboot
+}
+
+func scheduleBackup(backup *zconfig.DeviceOpsCmd) {
+
+	if backup == nil {
+
+		// stop the timer
+		if backupTimer != nil {
+			backupTimer.Stop()
+		}
+		backupConfig = nil
+		return
+	}
+
+	log.Printf("Backup Config: %v\n", backup)
+
+	if backupConfig == nil {
+		backupConfig = &zconfig.DeviceOpsCmd{}
+	}
+
+	// time counter value has changed
+	if (backupConfig == nil) ||
+		(backupConfig.Counter != backup.Counter) {
+
+		//timer was started, stop now
+		if backupTimer != nil {
+			backupTimer.Stop()
+		}
+
+		// start the timer again
+		duration := time.Duration(backup.Counter)
+		backupTimer = time.NewTimer(time.Second * duration)
+
+		go handleBackup()
+	}
+
+	backupConfig = backup
+}
+
+// the timer channel handler
+func handleReboot() {
+
+	<-rebootTimer.C
+
+	// XXX:FIXME perform graceful service stop/ state backup
+
+	switch rebootConfig.DesriedState {
+
+	case true:
+		log.Printf("Rebootiing...\n")
+		syscall.Reboot(0)
+
+	case false:
+		log.Printf("Powering Off...\n")
+		syscall.Shutdown(0, 0)
+	}
+}
+
+// the timer channel handler
+func handleBackup() {
+
+	<-backupTimer.C
+
+	log.Printf("Initiating backup...\n")
+
+	// XXX:FIXME implement backup shemantics
 }
 
 func parseNetworkConfig(appInstance *types.AppInstanceConfig,
@@ -342,8 +459,8 @@ func writeCertConfig(image types.StorageConfig, certUrl string) {
 	// should be coming from Drive
 	// also the sha for the cert should be set
 	var config = &types.DownloaderConfig{
-		Safename:        safename,
-		DownloadURL:     certUrl,
+		Safename:    safename,
+		DownloadURL: certUrl,
 		// XXX set IfName to to the FreeUplink[0]? NO
 		// Shouldn't we specify "any" to have the downloader try all?
 		// Or pass an array of the IfNames for all the uplinks?

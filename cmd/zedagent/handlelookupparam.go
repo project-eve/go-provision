@@ -50,10 +50,14 @@ func handleLookUpParam(devConfig *zconfig.EdgeDevConfig) {
 	uuidFileName := dirName + "/uuid"
 	clientIPFileName := dirName + "/clientIP"
 
+	lispInfo := devConfig.GetLispInfo()
+	if lispInfo == nil {
+		return
+	}
+
 	//Fill DeviceDb struct with LispInfo config...
 	var device = types.DeviceDb{}
 
-	lispInfo := devConfig.LispInfo
 	device.LispInstance = lispInfo.LispInstance
 	device.EID = net.ParseIP(lispInfo.EID)
 	device.EIDHashLen = uint8(lispInfo.EIDHashLen)

@@ -12,10 +12,10 @@ import (
 	psutilnet "github.com/shirou/gopsutil/net"
 	"github.com/zededa/api/zmet"
 	"github.com/zededa/go-provision/types"
-	"net"
-	"net/http"
 	"io/ioutil"
 	"log"
+	"net"
+	"net/http"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -96,7 +96,7 @@ func GetDeviceManufacturerInfo() (string, string, string, string, string) {
 	return productManufacturer, productName, productVersion, productSerial, productUuid
 }
 
-func ExecuteXentopCmd() [][]string{
+func ExecuteXentopCmd() [][]string {
 	var cpuStorageStat [][]string
 
 	count := 0
@@ -209,7 +209,7 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 		SendMetricsProtobufStrThroughHttp(ReportMetrics, iteration)
 		return
 	}
-	
+
 	for arr := 1; arr < 2; arr++ {
 
 		cpuTime, _ := strconv.ParseUint(cpuStorageStat[arr][3], 10, 0)
@@ -439,7 +439,7 @@ func PublishHypervisorInfoToZedCloud(iteration int) {
 
 // XXX change caller filename to key which is uuid; not used for now
 func PublishAppInfoToZedCloud(uuid string, aiStatus *types.AppInstanceStatus,
-     iteration int) {
+	iteration int) {
 	fmt.Printf("PublishAppInfoToZedCloud uuid %s\n", uuid)
 	// XXX if it was deleted we publish nothing; do we need to delete from
 	// zedcloud?
@@ -500,7 +500,7 @@ func SendInfoProtobufStrThroughHttp(ReportInfo *zmet.ZInfoMsg, iteration int) {
 
 	for i, intf := range globalConfig.Uplink {
 		addrCount := types.CountLocalAddrAny(globalConfig, globalStatus,
-			  intf)
+			intf)
 		// XXX makes logfile too long; debug flag?
 		log.Printf("Connecting to %s using intf %s i %d #sources %d\n",
 			statusUrl, intf, i, addrCount)
@@ -548,7 +548,7 @@ func SendInfoProtobufStrThroughHttp(ReportInfo *zmet.ZInfoMsg, iteration int) {
 // Each iteration we try a different uplink. For each uplink we try all
 // its local IP addresses until we get a success.
 func SendMetricsProtobufStrThroughHttp(ReportMetrics *zmet.ZMetricMsg,
-     iteration int) {
+	iteration int) {
 	data, err := proto.Marshal(ReportMetrics)
 	if err != nil {
 		fmt.Println("marshaling error: ", err)
@@ -562,7 +562,7 @@ func SendMetricsProtobufStrThroughHttp(ReportMetrics *zmet.ZMetricMsg,
 	// XXX makes logfile too long; debug flag?
 	log.Printf("Connecting to %s using intf %s interation %d #sources %d\n",
 		metricsUrl, intf, iteration, addrCount)
-	
+
 	for retryCount := 0; retryCount < addrCount; retryCount += 1 {
 		localAddr, err := types.GetLocalAddrAny(globalConfig,
 			globalStatus, retryCount, intf)

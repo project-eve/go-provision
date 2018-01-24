@@ -37,6 +37,7 @@ var metricsApi string = "api/v1/edgedevice/metrics"
 // XXX remove global variables
 // XXX shouldn't we know our own deviceId?
 var deviceId string
+
 // These URLs are effectively constants; depends on the server name
 var digestUrl string
 var configUrl string
@@ -157,9 +158,9 @@ func getLatestConfigDigest(digestUrl string, configSha string, iteration int) *z
 		}
 		client := &http.Client{Transport: transport}
 
-		resp, err := client.Post("https://" + digestUrl,
-				"application/x-proto-binary",
-				bytes.NewBuffer(data))
+		resp, err := client.Post("https://"+digestUrl,
+			"application/x-proto-binary",
+			bytes.NewBuffer(data))
 		if err != nil {
 			log.Printf("URL get fail: %v\n", err)
 			continue
