@@ -34,6 +34,11 @@ func parseConfig(config *zconfig.EdgeDevConfig) {
 
 	var appInstance = types.AppInstanceConfig{}
 
+	if config == nil {
+		log.Println("parseConfig <nil>")
+		return
+	}
+
 	log.Println("Applying new config")
 
 	parseOpCmds(config)
@@ -126,8 +131,8 @@ func parseConfig(config *zconfig.EdgeDevConfig) {
 
 func parseOpCmds(config *zconfig.EdgeDevConfig) {
 
-	scheduleReboot(config.Reboot)
-	scheduleBackup(config.Backup)
+	scheduleReboot(config.GetReboot())
+	scheduleBackup(config.GetBackup())
 }
 
 func scheduleReboot(reboot *zconfig.DeviceOpsCmd) {

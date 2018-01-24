@@ -218,10 +218,15 @@ func getLatestConfig(configUrl string, iteration int) {
 			continue
 		}
 		defer resp.Body.Close()
+
+		// dump the http response
+		log.Printf("httpResponse(config): %v\n", resp)
+
 		if err := validateConfigMessage(resp); err != nil {
 			log.Println("validateConfigMessage: ", err)
 			return
 		}
+
 		config, err := readDeviceConfigProtoMessage(resp)
 		if err != nil {
 			log.Println("readDeviceConfigProtoMessage: ", err)
@@ -273,11 +278,11 @@ func validateConfigMessage(r *http.Response) error {
 
 	switch r.StatusCode {
 	case http.StatusOK:
-		fmt.Printf("validateConfigMessage StatusOK\n")
+		log.Printf("validateConfigMessage StatusOK\n")
 	default:
-		fmt.Printf("validateConfigMessage statuscode %d %s\n",
+		log.Printf("validateConfigMessage statuscode %d %s\n",
 			r.StatusCode, http.StatusText(r.StatusCode))
-		fmt.Printf("received response %v\n", r)
+		log.Printf("received response %v\n", r)
 		return fmt.Errorf("http status %d %s",
 			r.StatusCode, http.StatusText(r.StatusCode))
 	}
