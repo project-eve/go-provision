@@ -108,7 +108,7 @@ func main() {
 
 		case change := <-appImgChanges:
 			{
-				go watch.HandleConfigStatusEvent(change,
+				watch.HandleConfigStatusEvent(change,
 					appImgConfigDirname,
 					appImgStatusDirname,
 					&types.DownloaderConfig{},
@@ -116,11 +116,10 @@ func main() {
 					handleObjectCreate,
 					handleObjectModify,
 					handleObjectDelete, nil)
-				continue
 			}
 		case change := <-baseOsChanges:
 			{
-				go watch.HandleConfigStatusEvent(change,
+				watch.HandleConfigStatusEvent(change,
 					baseOsConfigDirname,
 					baseOsStatusDirname,
 					&types.DownloaderConfig{},
@@ -128,11 +127,10 @@ func main() {
 					handleObjectCreate,
 					handleObjectModify,
 					handleObjectDelete, nil)
-				continue
 			}
 		case change := <-certObjChanges:
 			{
-				go watch.HandleConfigStatusEvent(change,
+				watch.HandleConfigStatusEvent(change,
 					certObjConfigDirname,
 					certObjStatusDirname,
 					&types.DownloaderConfig{},
@@ -140,7 +138,6 @@ func main() {
 					handleObjectCreate,
 					handleObjectModify,
 					handleObjectDelete, nil)
-				continue
 			}
 		}
 	}
@@ -247,8 +244,8 @@ func handleCreate(config types.DownloaderConfig, statusFilename string) {
 
 	// Update reserved space. Keep reserved until doDelete
 	// XXX RefCount -> 0 should keep it reserved.
-	status.ReservedSpace += config.MaxSize
-	globalStatus.ReservedSpace += config.MaxSize
+	status.ReservedSpace = config.MaxSize
+	globalStatus.ReservedSpace = config.MaxSize
 	updateRemainingSpace()
 
 	// If RefCount == 0 then we don't yet download.
@@ -331,6 +328,8 @@ func doDelete(statusFilename string, locDirname string,
 	log.Printf("doDelete(%v) for %s\n", status.Safename, status.DownloadURL)
 
 	// Delete the installed object
+	// XXX:FIXME, whether we really need to delete
+	// the installed object
 	if status.FinalObjDir != "" {
 		locFilename := status.FinalObjDir
 		if _, err := os.Stat(locFilename); err == nil {
@@ -344,6 +343,7 @@ func doDelete(statusFilename string, locDirname string,
 		}
 	}
 
+	// XXX:FIXME, delete from verifier/verified !!
 	locFilename := locDirname + "/pending"
 
 	if status.ImageSha256 != "" {
@@ -382,7 +382,7 @@ func handleDelete(status types.DownloaderStatus, statusFilename string) {
 	status.PendingDelete = true
 	writeDownloaderStatus(&status, statusFilename)
 
-	globalStatus.ReservedSpace -= status.ReservedSpace
+	globalStatus.ReservedSpace = 0
 	globalStatus.UsedSpace -= status.Size
 	updateRemainingSpace()
 
@@ -563,7 +563,7 @@ func writeFile(sFilename string, dFilename string) {
 
 // cloud storage interface functions/APIs
 
-// XXX should we use --cacart? Would assume we know the root CA.
+// XXX should we use --cacert? Would assume we know the root CA.
 // XXX Set --limit-rate 100k
 // XXX continue based on filesize with: -C -
 // XXX --max-filesize <bytes> from MaxSize in DownLoaderConfig (kbytes)
@@ -619,10 +619,9 @@ func handleSyncOp(syncOp zedUpload.SyncOpType,
 	status *types.DownloaderStatus) {
 
 	var err error
-	var locFilename string
 
 	locDirname := objectDownloadDirname + "/" + config.ObjType
-	locFilename = locDirname + "/pending"
+	locFilename := locDirname + "/pending"
 
 	// update status to DOWNLOAD STARTED
 	status.State = types.DOWNLOAD_STARTED
@@ -648,13 +647,12 @@ func handleSyncOp(syncOp zedUpload.SyncOpType,
 	switch config.TransportMethod {
 	case zconfig.DsType_DsS3.String():
 		{
-
 			auth := &zedUpload.AuthInput{AuthType: "s3",
 				Uname:    config.ApiKey,
 				Password: config.Password}
 
 			trType := zedUpload.SyncAwsTr
-			// XXX:FIXME , will come as part of data store
+			// XXX:FIXME, should come as part of data store
 			region := "us-west-2"
 
 			// create Endpoint
@@ -742,8 +740,9 @@ func handleSyncOpResponse(config types.DownloaderConfig,
 	}
 
 	// firstly, reset the reserved space
-	globalStatus.ReservedSpace -= config.MaxSize
-	status.ReservedSpace -= config.MaxSize
+	globalStatus.ReservedSpace = 0
+	status.ReservedSpace = 0
+	updateRemainingSpace()
 
 	status.Size = uint((info.Size() + 1023) / 1024)
 
