@@ -212,6 +212,9 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 	}
 	log.Println("length of cpuStorageStat is: ", len(cpuStorageStat))
 	log.Println("value cpuStorageStat is: ", cpuStorageStat)
+	var countApp int
+	countApp = 0
+	ReportMetrics.Am = make([]*zmet.AppMetric, len(cpuStorageStat)-2)
 	for arr := 1; arr < len(cpuStorageStat); arr++ {
 		if strings.Contains(cpuStorageStat[arr][1], "Domain-0") {
 			cpuTime, _ := strconv.ParseUint(cpuStorageStat[arr][3], 10, 0)
@@ -270,9 +273,9 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 
 			if len(cpuStorageStat) > 2 {
 				log.Println("domu has been spawned....so we will report it's metrics")
-				ReportMetrics.Am = make([]*zmet.AppMetric, len(cpuStorageStat)-2)
-				var countApp int
-				countApp = 0
+				//ReportMetrics.Am = make([]*zmet.AppMetric, len(cpuStorageStat)-2)
+				//var countApp int
+				//countApp = 0
 				ReportAppMetric := new(zmet.AppMetric)
 				ReportAppMetric.Cpu = new(zmet.AppCpuMetric)
 				ReportAppMetric.Memory = new(zmet.MemoryMetric)
@@ -317,6 +320,7 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 				//networkDetails.RxRate = //XXX TBD
 				ReportAppMetric.Network[0] = networkDetails
 				ReportMetrics.Am[countApp] = ReportAppMetric
+				log.Println("metrics of app is: ", ReportMetrics.Am[countApp])
 				countApp++
 			}
 
