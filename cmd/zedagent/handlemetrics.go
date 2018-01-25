@@ -95,6 +95,44 @@ func GetDeviceManufacturerInfo() (string, string, string, string, string) {
 	return productManufacturer, productName, productVersion, productSerial, productUuid
 }
 
+func ExecuteXlListCmd() [][]string{
+
+    cmd := exec.Command("sudo", "xl", "list")
+    stdout, err := cmd.Output()
+    if err != nil {
+        println(err.Error())
+    }
+
+    xlList := fmt.Sprintf("%s", stdout)
+    splitXlList := strings.Split(xlList, "\n")
+    var xlListWithEmptyVal []interface{}
+    for _, val := range splitXlList {
+        if val != "" {
+            xlListWithEmptyVal = append(xlListWithEmptyVal, strings.Split(val, " "))
+        }
+    }
+
+    xlListOutput := make([][]string, len(xlListWithEmptyVal))
+    for col := range xlListOutput {
+        xlListOutput[col] = make([]string, 6)
+    }
+    var count int
+    for idx1, xl := range xlListWithEmptyVal {
+
+        count = 0
+        fmt.Println("xlListWithEmptyVal: ", xl, idx1)
+        fmt.Println("xlListWithEmptyVal: ", len(xl.([]string)))
+        for _, xlVal := range xl.([]string) {
+            if xlVal != "" && idx1 != 0 {
+                xlListOutput[idx1-1][count] = xlVal
+                fmt.Println("xllist: ", xlListOutput[idx1-1][count], idx1-1, count)
+                count++
+            }
+        }
+    }
+	return xlListOutput
+}
+
 func ExecuteXentopCmd() [][]string {
 	var cpuStorageStat [][]string
 
@@ -106,9 +144,10 @@ func ExecuteXentopCmd() [][]string {
 	arg4 := "1"
 	arg5 := "-i"
 	arg6 := "2"
+	arg7 := "-f"
 
-	cmd1 := exec.Command(arg1, arg2, arg3, arg4, arg5, arg6)
-	stdout, err := cmd1.Output()
+	cmd := exec.Command(arg1, arg2, arg3, arg4, arg5, arg6, arg7)
+	stdout, err := cmd.Output()
 	if err != nil {
 		println(err.Error())
 		return [][]string{}
@@ -210,6 +249,13 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 		SendMetricsProtobufStrThroughHttp(ReportMetrics, iteration)
 		return
 	}
+
+	xlListOutput := ExecuteXlListCmd()
+	if len(xlListOutput) == 0 {
+        log.Printf("No xlList? metrics: %s\n", ReportMetrics)
+        SendMetricsProtobufStrThroughHttp(ReportMetrics, iteration)
+        return
+    }
 	log.Println("length of cpuStorageStat is: ", len(cpuStorageStat))
 	log.Println("value cpuStorageStat is: ", cpuStorageStat)
 	var countApp int
@@ -282,6 +328,11 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 
 				ReportAppMetric.AppName = cpuStorageStat[arr][1]
 
+				for xl := 0; xl < len(xlListOutput); xl++ {
+					if  xlListOutput[xl][0] == cpuStorageStat[arr][1]{
+						ReportAppMetric.AppID = xlListOutput[xl][1]
+					}
+				}
 				//appCpuUpTime, _ := strconv.ParseUint(cpuStorageStat[appArr][3], 10, 0)//XXX FIXME
 				//ReportAppMetric.Cpu.UpTime = *proto.Uint32(uint32(appCpuUpTime)) //XXX FIXME
 
