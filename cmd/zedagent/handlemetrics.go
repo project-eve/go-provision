@@ -120,12 +120,12 @@ func ExecuteXlListCmd() [][]string{
     for idx1, xl := range xlListWithEmptyVal {
 
         count = 0
-        fmt.Println("xlListWithEmptyVal: ", xl, idx1)
-        fmt.Println("xlListWithEmptyVal: ", len(xl.([]string)))
+        //fmt.Println("xlListWithEmptyVal: ", xl, idx1)
+        //fmt.Println("xlListWithEmptyVal: ", len(xl.([]string)))
         for _, xlVal := range xl.([]string) {
             if xlVal != "" && idx1 != 0 {
                 xlListOutput[idx1-1][count] = xlVal
-                fmt.Println("xllist: ", xlListOutput[idx1-1][count], idx1-1, count)
+                //fmt.Println("xllist: ", xlListOutput[idx1-1][count], idx1-1, count)
                 count++
             }
         }
