@@ -95,41 +95,41 @@ func GetDeviceManufacturerInfo() (string, string, string, string, string) {
 	return productManufacturer, productName, productVersion, productSerial, productUuid
 }
 
-func ExecuteXlListCmd() [][]string{
+func ExecuteXlListCmd() [][]string {
 
-    cmd := exec.Command("sudo", "xl", "list")
-    stdout, err := cmd.Output()
-    if err != nil {
-        println(err.Error())
-    }
+	cmd := exec.Command("sudo", "xl", "list")
+	stdout, err := cmd.Output()
+	if err != nil {
+		println(err.Error())
+	}
 
-    xlList := fmt.Sprintf("%s", stdout)
-    splitXlList := strings.Split(xlList, "\n")
-    var xlListWithEmptyVal []interface{}
-    for _, val := range splitXlList {
-        if val != "" {
-            xlListWithEmptyVal = append(xlListWithEmptyVal, strings.Split(val, " "))
-        }
-    }
+	xlList := fmt.Sprintf("%s", stdout)
+	splitXlList := strings.Split(xlList, "\n")
+	var xlListWithEmptyVal []interface{}
+	for _, val := range splitXlList {
+		if val != "" {
+			xlListWithEmptyVal = append(xlListWithEmptyVal, strings.Split(val, " "))
+		}
+	}
 
-    xlListOutput := make([][]string, len(xlListWithEmptyVal))
-    for col := range xlListOutput {
-        xlListOutput[col] = make([]string, 6)
-    }
-    var count int
-    for idx1, xl := range xlListWithEmptyVal {
+	xlListOutput := make([][]string, len(xlListWithEmptyVal)-1)
+	for col := range xlListOutput {
+		xlListOutput[col] = make([]string, 6)
+	}
+	var count int
+	for idx1, xl := range xlListWithEmptyVal {
 
-        count = 0
-        //fmt.Println("xlListWithEmptyVal: ", xl, idx1)
-        //fmt.Println("xlListWithEmptyVal: ", len(xl.([]string)))
-        for _, xlVal := range xl.([]string) {
-            if xlVal != "" && idx1 != 0 {
-                xlListOutput[idx1-1][count] = xlVal
-                //fmt.Println("xllist: ", xlListOutput[idx1-1][count], idx1-1, count)
-                count++
-            }
-        }
-    }
+		count = 0
+		//fmt.Println("xlListWithEmptyVal: ", xl, idx1)
+		//fmt.Println("xlListWithEmptyVal: ", len(xl.([]string)))
+		for _, xlVal := range xl.([]string) {
+			if xlVal != "" && idx1 != 0 {
+				xlListOutput[idx1-1][count] = xlVal
+				//fmt.Println("xllist: ", xlListOutput[idx1-1][count], idx1-1, count)
+				count++
+			}
+		}
+	}
 	return xlListOutput
 }
 
@@ -252,10 +252,10 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 
 	xlListOutput := ExecuteXlListCmd()
 	if len(xlListOutput) == 0 {
-        log.Printf("No xlList? metrics: %s\n", ReportMetrics)
-        SendMetricsProtobufStrThroughHttp(ReportMetrics, iteration)
-        return
-    }
+		log.Printf("No xlList? metrics: %s\n", ReportMetrics)
+		SendMetricsProtobufStrThroughHttp(ReportMetrics, iteration)
+		return
+	}
 	log.Println("length of cpuStorageStat is: ", len(cpuStorageStat))
 	log.Println("value cpuStorageStat is: ", cpuStorageStat)
 	var countApp int
@@ -329,7 +329,7 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 				ReportAppMetric.AppName = cpuStorageStat[arr][1]
 
 				for xl := 0; xl < len(xlListOutput); xl++ {
-					if  xlListOutput[xl][0] == cpuStorageStat[arr][1]{
+					if xlListOutput[xl][0] == cpuStorageStat[arr][1] {
 						ReportAppMetric.AppID = xlListOutput[xl][1]
 					}
 				}
@@ -541,13 +541,17 @@ func PublishHypervisorInfoToZedCloud(iteration int) {
 func PublishAppInfoToZedCloud(uuid string, aiStatus *types.AppInstanceStatus,
 	iteration int) {
 	fmt.Printf("PublishAppInfoToZedCloud uuid %s\n", uuid)
+	//log.Println("PublishAppInfoToZedCloud  aiStatus %s\n", aiStatus)
+	//log.Printf("PublishAppInfoToZedCloud  aiStatus %s\n", aiStatus)
 	// XXX if it was deleted we publish nothing; do we need to delete from
 	// zedcloud?
 	if aiStatus == nil {
 		fmt.Printf("PublishAppInfoToZedCloud uuid %s deleted\n", uuid)
 		return
 	}
-	uuidStr := aiStatus.UUIDandVersion.Version
+	log.Println("PublishAppInfoToZedCloud  aiStatus %s\n", aiStatus)
+	log.Printf("PublishAppInfoToZedCloud  aiStatus %s\n", aiStatus)
+	//uuidStr := aiStatus.UUIDandVersion.Version
 	var ReportInfo = &zmet.ZInfoMsg{}
 
 	appType := new(zmet.ZInfoTypes)
@@ -556,7 +560,36 @@ func PublishAppInfoToZedCloud(uuid string, aiStatus *types.AppInstanceStatus,
 	ReportInfo.DevId = *proto.String(deviceId)
 
 	ReportAppInfo := new(zmet.ZInfoApp)
-	ReportAppInfo.AppID = *proto.String(uuidStr)
+
+	xlListOutput := ExecuteXlListCmd()
+	for xl := 0; xl < len(xlListOutput); xl++ {
+		if strings.Contains(xlListOutput[xl][0], aiStatus.DisplayName) {
+			ReportAppInfo.AppID = xlListOutput[xl][1]
+		}
+	}
+	ReportAppInfo.AppName = aiStatus.DisplayName
+	ReportAppInfo.Activated = aiStatus.Activated
+	ReportAppInfo.Error = aiStatus.Error
+	errTime, _ := ptypes.TimestampProto(aiStatus.ErrorTime)
+	ReportAppInfo.ErrorTime = errTime
+
+	if len(aiStatus.StorageStatusList) == 0 {
+		log.Printf("storage status detail is empty so ignoring")
+	} else {
+
+		ReportAppInfo.SoftwareList = make([]*zmet.ZInfoSW, len(aiStatus.StorageStatusList))
+		for idx, sc := range aiStatus.StorageStatusList {
+
+			ReportSoftwareInfo := new(zmet.ZInfoSW)
+			ReportSoftwareInfo.SwVersion = aiStatus.UUIDandVersion.Version
+			ReportSoftwareInfo.SwHash = sc.ImageSha256
+
+			//ReportSoftwareInfo.State = sc.State //XXX FIXME
+
+			ReportAppInfo.SoftwareList[idx] = ReportSoftwareInfo
+		}
+	}
+	//ReportAppInfo.AppID = *proto.String(uuidStr)
 
 	// XXX:TBD should come from xen usage
 	ReportAppInfo.Ncpu = *proto.Uint32(uint32(0))
@@ -564,18 +597,18 @@ func PublishAppInfoToZedCloud(uuid string, aiStatus *types.AppInstanceStatus,
 	//ReportAppInfo.Storage	=	*proto.Uint32(uint32(0)) //XXX FIXME TBD
 
 	// XXX: should be multiple entries, one per storage item
-	ReportVerInfo := new(zmet.ZInfoSW)
-	if len(aiStatus.StorageStatusList) == 0 {
-		log.Printf("storage status detail is empty so ignoring")
-	} else {
-		sc := aiStatus.StorageStatusList[0]
-		ReportVerInfo.SwHash = *proto.String(sc.ImageSha256)
-	}
-	ReportVerInfo.SwVersion = *proto.String(aiStatus.UUIDandVersion.Version)
+	/*	ReportVerInfo := new(zmet.ZInfoSW)
+		if len(aiStatus.StorageStatusList) == 0 {
+			log.Printf("storage status detail is empty so ignoring")
+		} else {
+			sc := aiStatus.StorageStatusList[0]
+			ReportVerInfo.SwHash = *proto.String(sc.ImageSha256)
+		}
+		ReportVerInfo.SwVersion = *proto.String(aiStatus.UUIDandVersion.Version)
 
-	// XXX: this should be a list
-	ReportAppInfo.Software = ReportVerInfo
-
+		// XXX: this should be a list
+		ReportAppInfo.Software = ReportVerInfo
+	*/
 	ReportInfo.InfoContent = new(zmet.ZInfoMsg_Ainfo)
 	if x, ok := ReportInfo.GetInfoContent().(*zmet.ZInfoMsg_Ainfo); ok {
 		x.Ainfo = ReportAppInfo
