@@ -12,6 +12,7 @@ import (
 	psutilnet "github.com/shirou/gopsutil/net"
 	"github.com/zededa/api/zmet"
 	"github.com/zededa/go-provision/types"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -93,6 +94,50 @@ func GetDeviceManufacturerInfo() (string, string, string, string, string) {
 	productSerial := string(serial)
 	productUuid := string(uuid)
 	return productManufacturer, productName, productVersion, productSerial, productUuid
+}
+
+func ReadAppInterfaceName() map[string][]string {
+	files, err := ioutil.ReadDir("/var/run/domainmgr/xen")
+	if err != nil {
+		log.Fatal(err)
+	}
+	var appInterfaceAndNameList map[string][]string
+	appInterfaceAndNameList = make(map[string][]string)
+	for _, file := range files {
+		var interfaceList []string
+		var appName string
+		var applicationName string
+		log.Println(file.Name())
+		cb, err := ioutil.ReadFile("/var/run/domainmgr/xen/" + file.Name())
+		if err != nil {
+			log.Println("error while reading file...")
+		}
+		xenCfgData := string(cb)
+		splitXenCfgData := strings.Split(xenCfgData, "\n")
+		for _, data := range splitXenCfgData {
+			if strings.Contains(data, "name =") {
+				appName = strings.Split(data, "name =")[1]
+				reg := regexp.MustCompile(`"([^"]*)"`)
+				applicationName = reg.ReplaceAllString(appName, "${1}")
+				//log.Println("App name: ", applicationName)
+			}
+			if strings.Contains(data, "vif") {
+				vifDetail := strings.Split(data, "vif =")[1]
+				splitVifFromComma := strings.Split(vifDetail, ",")
+				log.Println("vif detail :", splitVifFromComma)
+				for _, val := range splitVifFromComma {
+					if strings.Contains(val, "bridge") || strings.Contains(val, "vifname") {
+						interfaceName := strings.Split(val, "=")[1]
+						//log.Println("interface name: ", interfaceName)
+						interfaceList = append(interfaceList, interfaceName)
+					}
+				}
+			}
+		}
+		appInterfaceAndNameList[applicationName] = interfaceList
+	}
+	//log.Println("appInterfaceAndNameList: ", appInterfaceAndNameList)
+	return appInterfaceAndNameList
 }
 
 func ExecuteXlListCmd() [][]string {
@@ -256,8 +301,8 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 		SendMetricsProtobufStrThroughHttp(ReportMetrics, iteration)
 		return
 	}
-	log.Println("length of cpuStorageStat is: ", len(cpuStorageStat))
-	log.Println("value cpuStorageStat is: ", cpuStorageStat)
+	//log.Println("length of cpuStorageStat is: ", len(cpuStorageStat))
+	//log.Println("value cpuStorageStat is: ", cpuStorageStat)
 	var countApp int
 	countApp = 0
 	ReportMetrics.Am = make([]*zmet.AppMetric, len(cpuStorageStat)-2)
@@ -342,15 +387,15 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 				ReportAppMetric.Cpu.CpuPercentage = *proto.Float64(float64(appCpuUsedInPercent))
 
 				totalAppMemory, _ := strconv.ParseUint(cpuStorageStat[arr][5], 10, 0)
-				log.Println("totalAppMemory: ", totalAppMemory)
+				//log.Println("totalAppMemory: ", totalAppMemory)
 				usedAppMemoryPercent, _ := strconv.ParseFloat(cpuStorageStat[arr][6], 10)
-				log.Println("usedAppMemoryPercent: ", usedAppMemoryPercent)
+				//log.Println("usedAppMemoryPercent: ", usedAppMemoryPercent)
 				usedMemory := (float64(totalAppMemory) * (usedAppMemoryPercent)) / 100
-				log.Println("usedMemory: ", usedMemory)
+				//log.Println("usedMemory: ", usedMemory)
 				availableMemory := float64(totalAppMemory) - usedMemory
-				log.Println("availableMemory: ", availableMemory)
+				//log.Println("availableMemory: ", availableMemory)
 				availableAppMemoryPercent := 100 - usedAppMemoryPercent
-				log.Println("availableAppMemoryPercent: ", availableAppMemoryPercent)
+				//log.Println("availableAppMemoryPercent: ", availableAppMemoryPercent)
 
 				ReportAppMetric.Memory.UsedMem = uint32(usedMemory)
 				ReportAppMetric.Memory.AvailMem = uint32(availableMemory)
@@ -358,18 +403,36 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 				ReportAppMetric.Memory.AvailPercentage = float64(availableAppMemoryPercent)
 
 				//XXX FIXME network info for domu...
-				ReportAppMetric.Network = make([]*zmet.NetworkMetric, 1)
-				networkDetails := new(zmet.NetworkMetric)
-				// networkDetails.IName =
-				appNetworkTx, _ := strconv.ParseUint(cpuStorageStat[arr][11], 10, 0)
-				networkDetails.TxBytes = uint64(appNetworkTx)
-				appNetworkRx, _ := strconv.ParseUint(cpuStorageStat[arr][12], 10, 0)
-				networkDetails.RxBytes = uint64(appNetworkRx)
-				//networkDetails.TxDrops = networkInfo.Dropout
-				//networkDetails.RxDrops = networkInfo.Dropin
-				//networkDetails.TxRate = //XXX TBD
-				//networkDetails.RxRate = //XXX TBD
-				ReportAppMetric.Network[0] = networkDetails
+				appInterfaceList := ReadAppInterfaceName()
+				if len(appInterfaceList) != 0 {
+					for appName, interfaceArr := range appInterfaceList {
+						if strings.TrimSpace(appName) == strings.TrimSpace(cpuStorageStat[arr][1]) {
+							network, err := psutilnet.IOCounters(true)
+							if err != nil {
+								log.Println(err)
+							} else {
+								ReportAppMetric.Network = make([]*zmet.NetworkMetric, len(interfaceArr))
+								for index, interfaceName := range interfaceArr {
+									for _, networkInfo := range network {
+										if interfaceName == networkInfo.Name {
+											networkDetails := new(zmet.NetworkMetric)
+											networkDetails.IName = networkInfo.Name
+											networkDetails.TxBytes = networkInfo.PacketsSent
+											networkDetails.RxBytes = networkInfo.PacketsRecv
+											networkDetails.TxDrops = networkInfo.Dropout
+											networkDetails.RxDrops = networkInfo.Dropin
+											//networkDetails.TxRate = //XXX TBD
+											//networkDetails.RxRate = //XXX TBD
+
+											ReportAppMetric.Network[index] = networkDetails
+										}
+									}
+								}
+							}
+						}
+
+					}
+				}
 				ReportMetrics.Am[countApp] = ReportAppMetric
 				log.Println("metrics of app is: ", ReportMetrics.Am[countApp])
 				countApp++
@@ -541,15 +604,12 @@ func PublishHypervisorInfoToZedCloud(iteration int) {
 func PublishAppInfoToZedCloud(uuid string, aiStatus *types.AppInstanceStatus,
 	iteration int) {
 	fmt.Printf("PublishAppInfoToZedCloud uuid %s\n", uuid)
-	//log.Println("PublishAppInfoToZedCloud  aiStatus %s\n", aiStatus)
-	//log.Printf("PublishAppInfoToZedCloud  aiStatus %s\n", aiStatus)
 	// XXX if it was deleted we publish nothing; do we need to delete from
 	// zedcloud?
 	if aiStatus == nil {
 		fmt.Printf("PublishAppInfoToZedCloud uuid %s deleted\n", uuid)
 		return
 	}
-	log.Println("PublishAppInfoToZedCloud  aiStatus %s\n", aiStatus)
 	log.Printf("PublishAppInfoToZedCloud  aiStatus %s\n", aiStatus)
 	//uuidStr := aiStatus.UUIDandVersion.Version
 	var ReportInfo = &zmet.ZInfoMsg{}
