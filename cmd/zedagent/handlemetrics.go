@@ -725,17 +725,22 @@ func SendInfoProtobufStrThroughHttp(ReportInfo *zmet.ZInfoMsg, iteration int) {
 			defer resp.Body.Close()
 			switch resp.StatusCode {
 			case http.StatusOK:
-				fmt.Printf("SendInfoProtobufStrThroughHttp StatusOK\n")
+				// XXX makes logfile too long; debug flag?
+				fmt.Printf("SendInfoProtobufStrThroughHttp to %s using intf %s source %v StatusOK\n",
+					statusUrl, intf, localTCPAddr)
+				fmt.Printf(" StatusOK\n")
+				return
 			default:
-				fmt.Printf("SendInfoProtobufStrThroughHttp statuscode %d %s\n",
+				fmt.Printf("SendInfoProtobufStrThroughHttp to %s using intf %s source %v statuscode %d %s\n",
+					statusUrl, intf, localTCPAddr,
 					resp.StatusCode, http.StatusText(resp.StatusCode))
 				fmt.Printf("received response %v\n", resp)
 			}
-			break
 		}
 		log.Printf("All attempts to connect to %s using intf %s failed\n",
 			statusUrl, intf)
 	}
+	log.Printf("All attempts to connect to %s failed\n", statusUrl)
 }
 
 // Each iteration we try a different uplink. For each uplink we try all
@@ -767,6 +772,7 @@ func SendMetricsProtobufStrThroughHttp(ReportMetrics *zmet.ZMetricMsg,
 		// XXX makes logfile too long; debug flag?
 		fmt.Printf("Connecting to %s using intf %s source %v\n",
 			metricsUrl, intf, localTCPAddr)
+
 		d := net.Dialer{LocalAddr: &localTCPAddr}
 		transport := &http.Transport{
 			TLSClientConfig: tlsConfig,
@@ -783,13 +789,16 @@ func SendMetricsProtobufStrThroughHttp(ReportMetrics *zmet.ZMetricMsg,
 		defer resp.Body.Close()
 		switch resp.StatusCode {
 		case http.StatusOK:
-			fmt.Printf("SendMetricsProtobufStrThroughHttp StatusOK\n")
+			// XXX makes logfile too long; debug flag?
+			fmt.Printf("SendMetricsProtobufStrThroughHttp to %s using intf %s source %v StatusOK\n",
+				metricsUrl, intf, localTCPAddr)
+			return
 		default:
-			fmt.Printf("SendMetricsProtobufStrThroughHttp statuscode %d %s\n",
+			fmt.Printf("SendMetricsProtobufStrThroughHttp to %s using intf %s source %v  statuscode %d %s\n",
+				metricsUrl, intf, localTCPAddr,
 				resp.StatusCode, http.StatusText(resp.StatusCode))
 			fmt.Printf("received response %v\n", resp)
 		}
-		return
 	}
 	log.Printf("All attempts to connect to %s using intf %s failed\n",
 		metricsUrl, intf)
