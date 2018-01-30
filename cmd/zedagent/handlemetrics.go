@@ -12,7 +12,6 @@ import (
 	psutilnet "github.com/shirou/gopsutil/net"
 	"github.com/zededa/api/zmet"
 	"github.com/zededa/go-provision/types"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -96,42 +95,69 @@ func GetDeviceManufacturerInfo() (string, string, string, string, string) {
 	return productManufacturer, productName, productVersion, productSerial, productUuid
 }
 
+// Key is UUID
+var domainStatus map[string]types.DomainStatus
+
+// Key is DomainName; value is arrive of interfacenames
+var appInterfaceAndNameList map[string][]string
+
+func handleDomainStatusModify(statusFilename string,
+	statusArg interface{}) {
+	var status *types.DomainStatus
+
+	switch statusArg.(type) {
+	default:
+		log.Fatal("Can only handle DomainStatus")
+	case *types.DomainStatus:
+		status = statusArg.(*types.DomainStatus)
+	}
+
+	key := status.UUIDandVersion.UUID.String()
+	log.Printf("handleDomainStatusModify for %s\n", key)
+	// Ignore if any Pending* flag is set
+	if status.PendingAdd || status.PendingModify || status.PendingDelete {
+		log.Printf("handleDomainstatusModify skipped due to Pending* for %s\n",
+			key)
+		return
+	}
+
+	if domainStatus == nil {
+		fmt.Printf("create Domain map\n")
+		domainStatus = make(map[string]types.DomainStatus)
+	}
+	domainStatus[key] = *status
+	if appInterfaceAndNameList == nil {
+		appInterfaceAndNameList = make(map[string][]string)
+	}
+	var interfaceList []string
+	for _, vif := range status.VifList {
+		interfaceList = append(interfaceList, vif.Bridge)
+	}
+	appInterfaceAndNameList[status.DomainName] = interfaceList
+	log.Printf("handleDomainStatusModidy appIntf %s %v\n", status.DomainName, interfaceList)
+	log.Printf("handleDomainStatusModify done for %s\n", key)
+}
+
+func handleDomainStatusDelete(statusFilename string) {
+	log.Printf("handleDomainStatusDelete for %s\n", statusFilename)
+	key := statusFilename
+	if m, ok := domainStatus[key]; !ok {
+		log.Printf("handleDomainStatusDelete for %s - not found\n",
+			key)
+	} else {
+		if _, ok := appInterfaceAndNameList[m.DomainName]; ok {
+			fmt.Printf("appInterfaceAndnameList for %v\n", m.DomainName)
+			delete(appInterfaceAndNameList, m.DomainName)
+		}
+		fmt.Printf("Domain map delete for %v\n", key)
+		delete(domainStatus, key)
+	}
+	log.Printf("handleDomainStatusDelete done for %s\n",
+		statusFilename)
+}
+
+// XXX do lookup on name instead of returning whole list?
 func ReadAppInterfaceName() map[string][]string {
-	files, err := ioutil.ReadDir("/var/run/domainmgr/xen")
-	if err != nil {
-		log.Fatal(err)
-	}
-	var appInterfaceAndNameList map[string][]string
-	appInterfaceAndNameList = make(map[string][]string)
-	for _, file := range files {
-		var interfaceList []string
-		var appName string
-		var applicationName string
-		cb, err := ioutil.ReadFile("/var/run/domainmgr/xen/" + file.Name())
-		if err != nil {
-			log.Println("error while reading file...")
-		}
-		xenCfgData := string(cb)
-		splitXenCfgData := strings.Split(xenCfgData, "\n")
-		for _, data := range splitXenCfgData {
-			if strings.Contains(data, "name =") {
-				appName = strings.Split(data, "name =")[1]
-				reg := regexp.MustCompile(`"([^"]*)"`)
-				applicationName = reg.ReplaceAllString(appName, "${1}")
-			}
-			if strings.Contains(data, "vif") {
-				vifDetail := strings.Split(data, "vif =")[1]
-				splitVifFromComma := strings.Split(vifDetail, ",")
-				for _, val := range splitVifFromComma {
-					if strings.Contains(val, "bridge") || strings.Contains(val, "vifname") {
-						interfaceName := strings.Split(val, "=")[1]
-						interfaceList = append(interfaceList, interfaceName)
-					}
-				}
-			}
-		}
-		appInterfaceAndNameList[applicationName] = interfaceList
-	}
 	return appInterfaceAndNameList
 }
 
@@ -332,18 +358,27 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 			if err != nil {
 				log.Println(err)
 			} else {
+				// XXX should we restrict this to the uplinks (plus dbo1x0 for dom0 "app")
+				// for now?
 				ReportDeviceMetric.Network = make([]*zmet.NetworkMetric, len(network))
 				for netx, networkInfo := range network {
 					networkDetails := new(zmet.NetworkMetric)
 					networkDetails.IName = networkInfo.Name
-					networkDetails.TxBytes = networkInfo.PacketsSent
-					networkDetails.RxBytes = networkInfo.PacketsRecv
+					// XXX should add TxPkts and RxPkts to zmet.proto
+					// networkDetails.TxPkts = networkInfo.PacketsSent
+					// networkDetails.RxPkts = networkInfo.PacketsRecv
+					networkDetails.TxBytes = networkInfo.BytesSent
+					networkDetails.RxBytes = networkInfo.BytesRecv
 					networkDetails.TxDrops = networkInfo.Dropout
 					networkDetails.RxDrops = networkInfo.Dropin
-					//networkDetails.TxRate = //XXX TBD
-					//networkDetails.RxRate = //XXX TBD
+					// XXX add Errors to zmet.proto
+					// networkDetails.TxErrors = networkInfo.Errout
+					// networkDetails.RxErrors = networkInfo.Errin
+					//networkDetails.TxRate = //XXX TBD deprecate in zmet.proto
+					//networkDetails.RxRate = //XXX TBD deprecate in zmet.proto
 					ReportDeviceMetric.Network[netx] = networkDetails
 				}
+				log.Println("network metrics: ", ReportDeviceMetric.Network)
 			}
 			ReportMetrics.MetricContent = new(zmet.ZMetricMsg_Dm)
 			if x, ok := ReportMetrics.GetMetricContent().(*zmet.ZMetricMsg_Dm); ok {
@@ -361,6 +396,9 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 
 				for xl := 0; xl < len(xlListOutput); xl++ {
 					if xlListOutput[xl][0] == cpuStorageStat[arr][1] {
+						// XXX set App name somewhere?
+						// XXX AppID should be AppNum from DomainStatus.
+						// But why to we need it in the report?
 						ReportAppMetric.AppID = xlListOutput[xl][1]
 					}
 				}
@@ -385,7 +423,7 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 				appInterfaceList := ReadAppInterfaceName()
 				if len(appInterfaceList) != 0 {
 					for appName, interfaceArr := range appInterfaceList {
-						if strings.TrimSpace(appName) == strings.TrimSpace(cpuStorageStat[arr][1]) {
+						if appName == strings.TrimSpace(cpuStorageStat[arr][1]) {
 							network, err := psutilnet.IOCounters(true)
 							if err != nil {
 								log.Println(err)
@@ -396,12 +434,20 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 										if interfaceName == networkInfo.Name {
 											networkDetails := new(zmet.NetworkMetric)
 											networkDetails.IName = networkInfo.Name
-											networkDetails.TxBytes = networkInfo.PacketsSent
-											networkDetails.RxBytes = networkInfo.PacketsRecv
-											networkDetails.TxDrops = networkInfo.Dropout
-											networkDetails.RxDrops = networkInfo.Dropin
-											//networkDetails.TxRate = //XXX TBD
-											//networkDetails.RxRate = //XXX TBD
+											// Note that the packets received on bu* and bo* where sent
+											// by the domU and vice versa, hence we swap here
+											// XXX should add TxPkts and RxPkts to zmet.proto
+											// networkDetails.TxPkts = networkInfo.PacketsRecv
+											// networkDetails.RxPkts = networkInfo.PacketsSent
+											networkDetails.TxBytes = networkInfo.BytesRecv
+											networkDetails.RxBytes = networkInfo.BytesSent
+											networkDetails.TxDrops = networkInfo.Dropin
+											networkDetails.RxDrops = networkInfo.Dropout
+											// XXX add Errors to zmet.proto
+											// networkDetails.TxErrors = networkInfo.Errin
+											// networkDetails.RxErrors = networkInfo.Errout
+											//networkDetails.TxRate = //XXX TBD deprecate in zmet.proto
+											//networkDetails.RxRate = //XXX TBD deprecate in zmet.proto
 
 											ReportAppMetric.Network[index] = networkDetails
 										}
@@ -490,6 +536,7 @@ func PublishDeviceInfoToZedCloud(iteration int) {
 		ReportDeviceManufacturerInfo.UUID = *proto.String(strings.TrimSpace(productUuid))
 		ReportDeviceInfo.Minfo = ReportDeviceManufacturerInfo
 	} else {
+		// XXX add compatible string for arm to zmet.proto
 		log.Println("fill manufacturer info for arm...") //XXX FIXME
 	}
 	ReportDeviceSoftwareInfo := new(zmet.ZInfoSW)
@@ -600,6 +647,8 @@ func PublishAppInfoToZedCloud(uuid string, aiStatus *types.AppInstanceStatus,
 
 	xlListOutput := ExecuteXlListCmd()
 	for xl := 0; xl < len(xlListOutput); xl++ {
+		// XXX We use DomainName elsewhere
+		// AppID should be AppNum from DomainStatus. But why to we need it in the report?
 		if strings.Contains(xlListOutput[xl][0], aiStatus.DisplayName) {
 			ReportAppInfo.AppID = xlListOutput[xl][1]
 		}
@@ -643,7 +692,7 @@ func PublishAppInfoToZedCloud(uuid string, aiStatus *types.AppInstanceStatus,
 }
 
 // This function is called per change, hence needs to try over all uplinks
-// send report on each uplink (XXX means iteration arg is not useful)
+// send report on each uplink (This means the iteration arg is not useful)
 // For each uplink we try different source IPs until we find a working one.
 func SendInfoProtobufStrThroughHttp(ReportInfo *zmet.ZInfoMsg, iteration int) {
 
