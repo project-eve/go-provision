@@ -166,7 +166,7 @@ func handleCreate(statusFilename string, configArg interface{}) {
 	}
 	writeVerifyObjectStatus(&status, statusFilename)
 
-	if err := moveObjectFromPendingToVerifier(config, &status); err != true {
+	if err := moveObjectFromPendingToVerifier(config, &status, statusFilename); err != true {
 		return
 	}
 
@@ -174,7 +174,7 @@ func handleCreate(statusFilename string, configArg interface{}) {
 		return
 	}
 
-	if err := moveObjectFromVerifierToVerified(config, &status); err == true {
+	if err := moveObjectFromVerifierToVerified(config, &status, statusFilename); err == true {
 		status.PendingAdd = false
 		status.State = types.DELIVERED
 		writeVerifyObjectStatus(&status, statusFilename)
@@ -184,7 +184,7 @@ func handleCreate(statusFilename string, configArg interface{}) {
 }
 
 func moveObjectFromPendingToVerifier(config *types.VerifyImageConfig,
-	status *types.VerifyImageStatus) bool {
+	status *types.VerifyImageStatus, statusFilename string) bool {
 
 	// Form the unique filename in /var/tmp/zedmanager/downloads/pending/
 	// based on the claimed Sha256 and safename, and the same name
@@ -203,7 +203,12 @@ func moveObjectFromPendingToVerifier(config *types.VerifyImageConfig,
 	log.Printf("Move from %s to %s\n", pendingFilename, verifierFilename)
 
 	if _, err := os.Stat(pendingFilename); err != nil {
-		log.Fatal(err)
+		// XXX hits sometimes
+		log.Printf("%s\n", err)
+		cerr := fmt.Sprintf("%v", err)
+		updateVerifyErrStatus(status, cerr, statusFilename)
+		log.Printf("handleCreate failed for %s\n", config.DownloadURL)
+		return false
 	}
 
 	if _, err := os.Stat(verifierFilename); err == nil {
@@ -294,7 +299,7 @@ func verifyObjectSha(config *types.VerifyImageConfig,
 }
 
 func moveObjectFromVerifierToVerified(config *types.VerifyImageConfig,
-	status *types.VerifyImageStatus) bool {
+	status *types.VerifyImageStatus, statusFilename string) bool {
 
 	downloadDirname := objectDownloadDirname + "/" + config.ObjType
 	verifierDirname := downloadDirname + "/verifier/" + status.ImageSha256

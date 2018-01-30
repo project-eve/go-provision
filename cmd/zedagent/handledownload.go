@@ -52,6 +52,7 @@ func createDownloaderConfig(objType string, safename string,
 		n := types.DownloaderConfig{
 			Safename:         safename,
 			DownloadURL:      sc.DownloadURL,
+			UseFreeUplinks:   true,
 			MaxSize:          sc.MaxSize,
 			TransportMethod:  sc.TransportMethod,
 			Dpath:            sc.Dpath,

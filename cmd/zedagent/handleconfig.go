@@ -115,17 +115,17 @@ func configTimerTask() {
 // Each iteration we try a different uplink. For each uplink we try all
 // its local IP addresses until we get a success.
 func getLatestConfig(configUrl string, iteration int) {
-	intf, err := types.GetUplinkAny(globalStatus, iteration)
+	intf, err := types.GetUplinkAny(deviceNetworkStatus, iteration)
 	if err != nil {
 		log.Printf("getLatestConfig:%v\n", err)
 		return
 	}
-	addrCount := types.CountLocalAddrAny(globalStatus, intf)
+	addrCount := types.CountLocalAddrAny(deviceNetworkStatus, intf)
 	// XXX makes logfile too long; debug flag?
 	log.Printf("Connecting to %s using intf %s interation %d #sources %d\n",
 		configUrl, intf, iteration, addrCount)
 	for retryCount := 0; retryCount < addrCount; retryCount += 1 {
-		localAddr, err := types.GetLocalAddrAny(globalStatus,
+		localAddr, err := types.GetLocalAddrAny(deviceNetworkStatus,
 			retryCount, intf)
 		if err != nil {
 			log.Fatal(err)
@@ -147,8 +147,9 @@ func getLatestConfig(configUrl string, iteration int) {
 			continue
 		}
 		defer resp.Body.Close()
-		if err := validateConfigMessage(resp); err != nil {
-			log.Println("validateConfigMessage:%v\n", err)
+		if err := validateConfigMessage(configUrl, intf, localTCPAddr,
+			resp); err != nil {
+			log.Println("validateConfigMessage: ", err)
 			return
 		}
 		config, err := readDeviceConfigProtoMessage(resp)
@@ -163,16 +164,20 @@ func getLatestConfig(configUrl string, iteration int) {
 		configUrl, intf)
 }
 
-func validateConfigMessage(r *http.Response) error {
+func validateConfigMessage(configUrl string, intf string,
+	localTCPAddr net.TCPAddr, r *http.Response) error {
 
 	var ctTypeStr = "Content-Type"
 	var ctTypeProtoStr = "application/x-proto-binary"
 
 	switch r.StatusCode {
 	case http.StatusOK:
-		log.Printf("validateConfigMessage StatusOK\n")
+		// XXX makes logfile too long; debug flag?
+		log.Printf("validateConfigMessage %s using intf %s source %v StatusOK\n",
+			configUrl, intf, localTCPAddr)
 	default:
-		log.Printf("validateConfigMessage statuscode %d %s\n",
+		log.Printf("validateConfigMessage %s using intf %s source %v statuscode %d %s\n",
+			configUrl, intf, localTCPAddr,
 			r.StatusCode, http.StatusText(r.StatusCode))
 		log.Printf("received response %v\n", r)
 		return fmt.Errorf("http status %d %s",

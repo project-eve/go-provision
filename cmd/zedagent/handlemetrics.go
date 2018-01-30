@@ -355,8 +355,8 @@ func PublishDeviceInfoToZedCloud(baseOsStatus map[string]types.BaseOsStatus, ite
 	//global status...
 	interfaces, _ := psutilnet.Interfaces()
 	ReportDeviceInfo.Network = make([]*zmet.ZInfoNetwork,
-		len(globalStatus.UplinkStatus))
-	for index, uplink := range globalStatus.UplinkStatus {
+		len(deviceNetworkStatus.UplinkStatus))
+	for index, uplink := range deviceNetworkStatus.UplinkStatus {
 		for _, interfaceDetail := range interfaces {
 			if uplink.IfName == interfaceDetail.Name {
 				ReportDeviceNetworkInfo := new(zmet.ZInfoNetwork)
@@ -489,15 +489,15 @@ func SendInfoProtobufStrThroughHttp(ReportInfo *zmet.ZInfoMsg, iteration int) {
 		return
 	}
 
-	for i, uplink := range globalStatus.UplinkStatus {
+	for i, uplink := range deviceNetworkStatus.UplinkStatus {
 		intf := uplink.IfName
-		addrCount := types.CountLocalAddrAny(globalStatus, intf)
+		addrCount := types.CountLocalAddrAny(deviceNetworkStatus, intf)
 		// XXX makes logfile too long; debug flag?
 		log.Printf("Connecting to %s using intf %s i %d #sources %d\n",
 			statusUrl, intf, i, addrCount)
 
 		for retryCount := 0; retryCount < addrCount; retryCount += 1 {
-			localAddr, err := types.GetLocalAddrAny(globalStatus,
+			localAddr, err := types.GetLocalAddrAny(deviceNetworkStatus,
 				retryCount, intf)
 			if err != nil {
 				log.Fatal(err)
@@ -523,17 +523,22 @@ func SendInfoProtobufStrThroughHttp(ReportInfo *zmet.ZInfoMsg, iteration int) {
 			defer resp.Body.Close()
 			switch resp.StatusCode {
 			case http.StatusOK:
-				fmt.Printf("SendInfoProtobufStrThroughHttp StatusOK\n")
+				// XXX makes logfile too long; debug flag?
+				fmt.Printf("SendInfoProtobufStrThroughHttp to %s using intf %s source %v StatusOK\n",
+					statusUrl, intf, localTCPAddr)
+				fmt.Printf(" StatusOK\n")
+				return
 			default:
-				fmt.Printf("SendInfoProtobufStrThroughHttp statuscode %d %s\n",
+				fmt.Printf("SendInfoProtobufStrThroughHttp to %s using intf %s source %v statuscode %d %s\n",
+					statusUrl, intf, localTCPAddr,
 					resp.StatusCode, http.StatusText(resp.StatusCode))
 				fmt.Printf("received response %v\n", resp)
 			}
-			break
 		}
 		log.Printf("All attempts to connect to %s using intf %s failed\n",
 			statusUrl, intf)
 	}
+	log.Printf("All attempts to connect to %s failed\n", statusUrl)
 }
 
 // Each iteration we try a different uplink. For each uplink we try all
@@ -545,17 +550,18 @@ func SendMetricsProtobufStrThroughHttp(ReportMetrics *zmet.ZMetricMsg,
 		log.Println("marshaling error: ", err)
 	}
 
-	intf, err := types.GetUplinkAny(globalStatus, iteration)
+	intf, err := types.GetUplinkAny(deviceNetworkStatus, iteration)
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("SendMetricsProtobufStrThroughHttp: %s\n", err)
+		return
 	}
-	addrCount := types.CountLocalAddrAny(globalStatus, intf)
+	addrCount := types.CountLocalAddrAny(deviceNetworkStatus, intf)
 	// XXX makes logfile too long; debug flag?
 	log.Printf("Connecting to %s using intf %s interation %d #sources %d\n",
 		metricsUrl, intf, iteration, addrCount)
 
 	for retryCount := 0; retryCount < addrCount; retryCount += 1 {
-		localAddr, err := types.GetLocalAddrAny(globalStatus,
+		localAddr, err := types.GetLocalAddrAny(deviceNetworkStatus,
 			retryCount, intf)
 		if err != nil {
 			log.Fatal(err)
@@ -564,6 +570,7 @@ func SendMetricsProtobufStrThroughHttp(ReportMetrics *zmet.ZMetricMsg,
 		// XXX makes logfile too long; debug flag?
 		log.Printf("Connecting to %s using intf %s source %v\n",
 			metricsUrl, intf, localTCPAddr)
+
 		d := net.Dialer{LocalAddr: &localTCPAddr}
 		transport := &http.Transport{
 			TLSClientConfig: tlsConfig,
@@ -580,13 +587,16 @@ func SendMetricsProtobufStrThroughHttp(ReportMetrics *zmet.ZMetricMsg,
 		defer resp.Body.Close()
 		switch resp.StatusCode {
 		case http.StatusOK:
-			log.Printf("SendMetricsProtobufStrThroughHttp StatusOK\n")
+			// XXX makes logfile too long; debug flag?
+			log.Printf("SendMetricsProtobufStrThroughHttp to %s using intf %s source %v StatusOK\n",
+				metricsUrl, intf, localTCPAddr)
+			return
 		default:
-			log.Printf("SendMetricsProtobufStrThroughHttp statuscode %d %s\n",
+			log.Printf("SendMetricsProtobufStrThroughHttp to %s using intf %s source %v  statuscode %d %s\n",
+				metricsUrl, intf, localTCPAddr,
 				resp.StatusCode, http.StatusText(resp.StatusCode))
-			fmt.Printf("received response %v\n", resp)
+			log.Printf("received response %v\n", resp)
 		}
-		return
 	}
 	log.Printf("All attempts to connect to %s using intf %s failed\n",
 		metricsUrl, intf)

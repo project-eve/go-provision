@@ -91,20 +91,20 @@ func main() {
 	// Or just feed this into a separate channel? Or defer for lisp?
 	addrChangeFn := func(ifname string) {
 		log.Printf("addrChangeFn(%s) called\n", ifname)
-		newGlobalStatus, _ := types.MakeDeviceNetworkStatus(globalConfig)
-		if !reflect.DeepEqual(globalStatus, newGlobalStatus) {
+		new, _ := types.MakeDeviceNetworkStatus(deviceNetworkConfig)
+		if !reflect.DeepEqual(deviceNetworkStatus, new) {
 			log.Printf("Address change for %s\n", ifname)
-			log.Printf("From %v to %v\n", globalStatus, newGlobalStatus)
-			globalStatus = newGlobalStatus
-			writeGlobalStatus()
+			log.Printf("From %v to %v\n", deviceNetworkStatus, new)
+			deviceNetworkStatus = new
+			updateDeviceNetworkStatus()
 			updateLispConfiglets()
 		} else {
 			log.Printf("No address change for %s\n", ifname)
 		}
 	}
-
-	routeChanges, addrChanges, linkChanges := PbrInit(globalConfig.Uplink,
-		globalConfig.FreeUplinks, addrChangeFn)
+	routeChanges, addrChanges, linkChanges := PbrInit(
+		deviceNetworkConfig.Uplink, deviceNetworkConfig.FreeUplinks,
+		addrChangeFn)
 
 	handleRestart(false)
 	var restartFn watch.ConfigRestartHandler = handleRestart
@@ -148,9 +148,9 @@ func handleRestart(done bool) {
 	}
 }
 
-var globalConfig types.DeviceNetworkConfig
-var globalStatus types.DeviceNetworkStatus
-var globalStatusFilename string
+var deviceNetworkConfig types.DeviceNetworkConfig
+var deviceNetworkStatus types.DeviceNetworkStatus
+var deviceNetworkStatusFilename string
 var globalRunDirname string
 var lispRunDirname string
 
@@ -159,7 +159,7 @@ var broken = false
 
 func handleInit(configFilename string, statusFilename string,
 	runDirname string) {
-	globalStatusFilename = statusFilename
+	deviceNetworkStatusFilename = statusFilename
 	globalRunDirname = runDirname
 
 	// XXX should this be in the lisp code?
@@ -178,21 +178,21 @@ func handleInit(configFilename string, statusFilename string,
 		}
 	}
 
-	// Need initial globalStatus for iptablesInit
+	// Need initial deviceNetworkStatus for iptablesInit
 	var err error
-	globalConfig, err = types.GetDeviceNetworkConfig(configFilename)
+	deviceNetworkConfig, err = types.GetDeviceNetworkConfig(configFilename)
 	if err != nil {
 		log.Printf("%s for %s\n", err, configFilename)
 		log.Fatal(err)
 	}
-	globalStatus, err = types.MakeDeviceNetworkStatus(globalConfig)
+	deviceNetworkStatus, err = types.MakeDeviceNetworkStatus(deviceNetworkConfig)
 	if err != nil {
 		log.Printf("%s from MakeDeviceNetworkStatus\n", err)
 		// Proceed even if some uplinks are missing
 	}
 
 	// Create and write with initial values
-	writeGlobalStatus()
+	updateDeviceNetworkStatus()
 
 	// Setup initial iptables rules
 	iptablesInit()
@@ -235,16 +235,16 @@ func handleInit(configFilename string, statusFilename string,
 	}
 }
 
-func writeGlobalStatus() {
-	b, err := json.Marshal(globalStatus)
+func updateDeviceNetworkStatus() {
+	b, err := json.Marshal(deviceNetworkStatus)
 	if err != nil {
 		log.Fatal(err, "json Marshal DeviceNetworkStatus")
 	}
 	// We assume a /var/run path hence we don't need to worry about
 	// partial writes/empty files due to a kernel crash.
-	err = ioutil.WriteFile(globalStatusFilename, b, 0644)
+	err = ioutil.WriteFile(deviceNetworkStatusFilename, b, 0644)
 	if err != nil {
-		log.Fatal(err, globalStatusFilename)
+		log.Fatal(err, deviceNetworkStatusFilename)
 	}
 }
 
@@ -346,7 +346,7 @@ func updateLispConfiglets() {
 				olIfname, status.IsZedmanager)
 			createLispConfiglet(lispRunDirname, status.IsZedmanager,
 				olStatus.IID, olStatus.EID, olStatus.LispSignature,
-				globalStatus, olIfname, olIfname,
+				deviceNetworkStatus, olIfname, olIfname,
 				additionalInfo, olStatus.LispServers)
 		}
 	}
@@ -522,7 +522,7 @@ func handleCreate(statusFilename string, configArg interface{}) {
 		// Create LISP configlets for IID and EID/signature
 		createLispConfiglet(lispRunDirname, config.IsZedmanager,
 			olConfig.IID, olConfig.EID, olConfig.LispSignature,
-			globalStatus, olIfname, olIfname,
+			deviceNetworkStatus, olIfname, olIfname,
 			additionalInfo, olConfig.LispServers)
 		status.OverlayNetworkList = make([]types.OverlayNetworkStatus,
 			len(config.OverlayNetworkList))
@@ -653,7 +653,7 @@ func handleCreate(statusFilename string, configArg interface{}) {
 		// Create LISP configlets for IID and EID/signature
 		createLispConfiglet(lispRunDirname, config.IsZedmanager,
 			olConfig.IID, olConfig.EID, olConfig.LispSignature,
-			globalStatus, olIfname, olIfname,
+			deviceNetworkStatus, olIfname, olIfname,
 			additionalInfo, olConfig.LispServers)
 
 		// Add bridge parameters for Xen to Status
@@ -871,7 +871,7 @@ func handleModify(statusFilename string, configArg interface{},
 		// Create LISP configlets for IID and EID/signature
 		updateLispConfiglet(lispRunDirname, false, olConfig.IID,
 			olConfig.EID, olConfig.LispSignature,
-			globalStatus, olIfname, olIfname,
+			deviceNetworkStatus, olIfname, olIfname,
 			additionalInfo, olConfig.LispServers)
 
 	}
@@ -1027,7 +1027,7 @@ func handleDelete(statusFilename string, statusArg interface{}) {
 
 		// Delete LISP configlets
 		deleteLispConfiglet(lispRunDirname, true, olStatus.IID,
-			olStatus.EID, globalStatus)
+			olStatus.EID, deviceNetworkStatus)
 	} else {
 		// Delete everything for overlay
 		for olNum := 1; olNum <= maxOlNum; olNum++ {
@@ -1066,7 +1066,7 @@ func handleDelete(statusFilename string, statusArg interface{}) {
 				// Delete LISP configlets
 				deleteLispConfiglet(lispRunDirname, false,
 					olStatus.IID, olStatus.EID,
-					globalStatus)
+					deviceNetworkStatus)
 			} else {
 				log.Println("Missing status for overlay %d; can not clean up ACLs and LISP\n",
 					olNum)
@@ -1151,17 +1151,17 @@ func handleDNCModify(configFilename string,
 
 	log.Printf("handleDNCModify for %s\n", configFilename)
 
-	globalConfig = *config
-	newGlobalStatus, _ := types.MakeDeviceNetworkStatus(*config)
-	if !reflect.DeepEqual(globalStatus, newGlobalStatus) {
+	deviceNetworkConfig = *config
+	new, _ := types.MakeDeviceNetworkStatus(*config)
+	if !reflect.DeepEqual(deviceNetworkStatus, new) {
 		log.Printf("DeviceNetworkStatus change from %v to %v\n",
-			globalStatus, newGlobalStatus)
-		globalStatus = newGlobalStatus
-		writeGlobalStatus()
+			deviceNetworkStatus, new)
+		deviceNetworkStatus = new
+		updateDeviceNetworkStatus()
 		updateLispConfiglets()
 
-		setUplinks(globalConfig.Uplink)
-		setFreeUplinks(globalConfig.FreeUplinks)
+		setUplinks(deviceNetworkConfig.Uplink)
+		setFreeUplinks(deviceNetworkConfig.FreeUplinks)
 	}
 	log.Printf("handleDNCModify done for %s\n", configFilename)
 }
@@ -1173,7 +1173,7 @@ func handleDNCDelete(configFilename string) {
 		fmt.Printf("handleDNSDelete: ignoring %s\n", configFilename)
 		return
 	}
-	globalStatus = types.DeviceNetworkStatus{}
-	writeGlobalStatus()
+	deviceNetworkStatus = types.DeviceNetworkStatus{}
+	updateDeviceNetworkStatus()
 	log.Printf("handleDNCDelete done for %s\n", configFilename)
 }
