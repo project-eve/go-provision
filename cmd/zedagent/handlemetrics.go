@@ -107,7 +107,6 @@ func ReadAppInterfaceName() map[string][]string {
 		var interfaceList []string
 		var appName string
 		var applicationName string
-		log.Println(file.Name())
 		cb, err := ioutil.ReadFile("/var/run/domainmgr/xen/" + file.Name())
 		if err != nil {
 			log.Println("error while reading file...")
@@ -119,16 +118,13 @@ func ReadAppInterfaceName() map[string][]string {
 				appName = strings.Split(data, "name =")[1]
 				reg := regexp.MustCompile(`"([^"]*)"`)
 				applicationName = reg.ReplaceAllString(appName, "${1}")
-				//log.Println("App name: ", applicationName)
 			}
 			if strings.Contains(data, "vif") {
 				vifDetail := strings.Split(data, "vif =")[1]
 				splitVifFromComma := strings.Split(vifDetail, ",")
-				log.Println("vif detail :", splitVifFromComma)
 				for _, val := range splitVifFromComma {
 					if strings.Contains(val, "bridge") || strings.Contains(val, "vifname") {
 						interfaceName := strings.Split(val, "=")[1]
-						//log.Println("interface name: ", interfaceName)
 						interfaceList = append(interfaceList, interfaceName)
 					}
 				}
@@ -136,7 +132,6 @@ func ReadAppInterfaceName() map[string][]string {
 		}
 		appInterfaceAndNameList[applicationName] = interfaceList
 	}
-	//log.Println("appInterfaceAndNameList: ", appInterfaceAndNameList)
 	return appInterfaceAndNameList
 }
 
@@ -165,12 +160,9 @@ func ExecuteXlListCmd() [][]string {
 	for idx1, xl := range xlListWithEmptyVal {
 
 		count = 0
-		//fmt.Println("xlListWithEmptyVal: ", xl, idx1)
-		//fmt.Println("xlListWithEmptyVal: ", len(xl.([]string)))
 		for _, xlVal := range xl.([]string) {
 			if xlVal != "" && idx1 != 0 {
 				xlListOutput[idx1-1][count] = xlVal
-				//fmt.Println("xllist: ", xlListOutput[idx1-1][count], idx1-1, count)
 				count++
 			}
 		}
@@ -275,7 +267,6 @@ func ExecuteXentopCmd() [][]string {
 func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 
 	var ReportMetrics = &zmet.ZMetricMsg{}
-	//var devAndAppMetric = &zmet.Metrics{}
 
 	ReportDeviceMetric := new(zmet.DeviceMetric)
 	ReportDeviceMetric.Cpu = new(zmet.CpuMetric)
@@ -301,8 +292,6 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 		SendMetricsProtobufStrThroughHttp(ReportMetrics, iteration)
 		return
 	}
-	//log.Println("length of cpuStorageStat is: ", len(cpuStorageStat))
-	//log.Println("value cpuStorageStat is: ", cpuStorageStat)
 	var countApp int
 	countApp = 0
 	ReportMetrics.Am = make([]*zmet.AppMetric, len(cpuStorageStat)-2)
@@ -364,9 +353,6 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 
 			if len(cpuStorageStat) > 2 {
 				log.Println("domu has been spawned....so we will report it's metrics")
-				//ReportMetrics.Am = make([]*zmet.AppMetric, len(cpuStorageStat)-2)
-				//var countApp int
-				//countApp = 0
 				ReportAppMetric := new(zmet.AppMetric)
 				ReportAppMetric.Cpu = new(zmet.AppCpuMetric)
 				ReportAppMetric.Memory = new(zmet.MemoryMetric)
@@ -378,24 +364,17 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 						ReportAppMetric.AppID = xlListOutput[xl][1]
 					}
 				}
-				//appCpuUpTime, _ := strconv.ParseUint(cpuStorageStat[appArr][3], 10, 0)//XXX FIXME
-				//ReportAppMetric.Cpu.UpTime = *proto.Uint32(uint32(appCpuUpTime)) //XXX FIXME
 
 				appCpuUpTime, _ := strconv.ParseUint(cpuStorageStat[arr][3], 10, 0) //XXX FIXME
-				ReportAppMetric.Cpu.CpuTotal = *proto.Uint32(uint32(appCpuUpTime))  //XXX FIXME
+				ReportAppMetric.Cpu.CpuTotal = *proto.Uint32(uint32(appCpuUpTime))  //XXX FIXME TBD
 				appCpuUsedInPercent, _ := strconv.ParseFloat(cpuStorageStat[arr][4], 10)
 				ReportAppMetric.Cpu.CpuPercentage = *proto.Float64(float64(appCpuUsedInPercent))
 
 				totalAppMemory, _ := strconv.ParseUint(cpuStorageStat[arr][5], 10, 0)
-				//log.Println("totalAppMemory: ", totalAppMemory)
 				usedAppMemoryPercent, _ := strconv.ParseFloat(cpuStorageStat[arr][6], 10)
-				//log.Println("usedAppMemoryPercent: ", usedAppMemoryPercent)
 				usedMemory := (float64(totalAppMemory) * (usedAppMemoryPercent)) / 100
-				//log.Println("usedMemory: ", usedMemory)
 				availableMemory := float64(totalAppMemory) - usedMemory
-				//log.Println("availableMemory: ", availableMemory)
 				availableAppMemoryPercent := 100 - usedAppMemoryPercent
-				//log.Println("availableAppMemoryPercent: ", availableAppMemoryPercent)
 
 				ReportAppMetric.Memory.UsedMem = uint32(usedMemory)
 				ReportAppMetric.Memory.AvailMem = uint32(availableMemory)
@@ -434,7 +413,7 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 					}
 				}
 				ReportMetrics.Am[countApp] = ReportAppMetric
-				log.Println("metrics of app is: ", ReportMetrics.Am[countApp])
+				log.Println("metrics per app is: ", ReportMetrics.Am[countApp])
 				countApp++
 			}
 
@@ -610,8 +589,6 @@ func PublishAppInfoToZedCloud(uuid string, aiStatus *types.AppInstanceStatus,
 		fmt.Printf("PublishAppInfoToZedCloud uuid %s deleted\n", uuid)
 		return
 	}
-	log.Printf("PublishAppInfoToZedCloud  aiStatus %s\n", aiStatus)
-	//uuidStr := aiStatus.UUIDandVersion.Version
 	var ReportInfo = &zmet.ZInfoMsg{}
 
 	appType := new(zmet.ZInfoTypes)
@@ -627,6 +604,7 @@ func PublishAppInfoToZedCloud(uuid string, aiStatus *types.AppInstanceStatus,
 			ReportAppInfo.AppID = xlListOutput[xl][1]
 		}
 	}
+	//ReportAppInfo.SystemApp = //XXX FIXME TBD
 	ReportAppInfo.AppName = aiStatus.DisplayName
 	ReportAppInfo.Activated = aiStatus.Activated
 	ReportAppInfo.Error = aiStatus.Error
@@ -649,26 +627,10 @@ func PublishAppInfoToZedCloud(uuid string, aiStatus *types.AppInstanceStatus,
 			ReportAppInfo.SoftwareList[idx] = ReportSoftwareInfo
 		}
 	}
-	//ReportAppInfo.AppID = *proto.String(uuidStr)
 
-	// XXX:TBD should come from xen usage
-	ReportAppInfo.Ncpu = *proto.Uint32(uint32(0))
-	ReportAppInfo.Memory = *proto.Uint32(uint32(0))
-	//ReportAppInfo.Storage	=	*proto.Uint32(uint32(0)) //XXX FIXME TBD
+	/*ReportAppInfo.Ncpu = *proto.Uint32(uint32(0)) // deprecated
+	ReportAppInfo.Memory = *proto.Uint32(uint32(0))*/ // deprecated
 
-	// XXX: should be multiple entries, one per storage item
-	/*	ReportVerInfo := new(zmet.ZInfoSW)
-		if len(aiStatus.StorageStatusList) == 0 {
-			log.Printf("storage status detail is empty so ignoring")
-		} else {
-			sc := aiStatus.StorageStatusList[0]
-			ReportVerInfo.SwHash = *proto.String(sc.ImageSha256)
-		}
-		ReportVerInfo.SwVersion = *proto.String(aiStatus.UUIDandVersion.Version)
-
-		// XXX: this should be a list
-		ReportAppInfo.Software = ReportVerInfo
-	*/
 	ReportInfo.InfoContent = new(zmet.ZInfoMsg_Ainfo)
 	if x, ok := ReportInfo.GetInfoContent().(*zmet.ZInfoMsg_Ainfo); ok {
 		x.Ainfo = ReportAppInfo
