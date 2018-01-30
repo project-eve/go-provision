@@ -35,10 +35,11 @@ func MaybeAddVerifyImageConfig(safename string, sc *types.StorageConfig) {
 			Safename:         safename,
 			DownloadURL:      sc.DownloadURL,
 			ImageSha256:      sc.ImageSha256,
-			RefCount:         1,
 			CertificateChain: sc.CertificateChain,
 			ImageSignature:   sc.ImageSignature,
 			SignatureKey:     sc.SignatureKey,
+			ObjType:          sc.ObjType,
+			RefCount:         1,
 		}
 		verifyImageConfig[key] = n
 	}
@@ -180,11 +181,11 @@ func LookupVerifyImageStatusSha256(sha256 string) (types.VerifyImageStatus,
 }
 
 func LookupVerifyImageStatusAny(safename string,
-     sha256 string) (types.VerifyImageStatus, error) {
+	sha256 string) (types.VerifyImageStatus, error) {
 	m0, err := LookupVerifyImageStatus(safename)
 	if err == nil {
 		return m0, nil
-	}	
+	}
 	m1, err := lookupVerifyImageStatusSha256Impl(sha256)
 	if err == nil {
 		log.Printf("LookupVerifyImageStatusAny: found based on sha %s\n",
@@ -192,7 +193,7 @@ func LookupVerifyImageStatusAny(safename string,
 		return *m1, nil
 	} else {
 		return types.VerifyImageStatus{},
-		       errors.New("No VerifyImageStatus for safename nor sha")
+			errors.New("No VerifyImageStatus for safename nor sha")
 	}
 }
 

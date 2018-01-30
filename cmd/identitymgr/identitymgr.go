@@ -34,10 +34,13 @@ import (
 
 // Keeping status in /var/run to be clean after a crash/reboot
 const (
-	baseDirname = "/var/tmp/identitymgr"
-	runDirname = "/var/run/identitymgr"
-	configDirname = baseDirname + "/config"
-	statusDirname = runDirname + "/status"
+	moduleName     = "identitymgr"
+	zedBaseDirname = "/var/tmp"
+	zedRunDirname  = "/var/run"
+	baseDirname    = zedBaseDirname + "/" + moduleName
+	runDirname     = zedRunDirname + "/" + moduleName
+	configDirname  = baseDirname + "/config"
+	statusDirname  = runDirname + "/status"
 )
 
 // Set from Makefile
@@ -55,26 +58,9 @@ func main() {
 	log.Printf("Starting identitymgr\n")
 	watch.CleanupRestarted("identitymgr")
 
-	if _, err := os.Stat(baseDirname); err != nil {
-		if err := os.Mkdir(baseDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-	if _, err := os.Stat(configDirname); err != nil {
-		if err := os.Mkdir(configDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-	if _, err := os.Stat(runDirname); err != nil {
-		if err := os.Mkdir(runDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-	if _, err := os.Stat(statusDirname); err != nil {
-		if err := os.Mkdir(statusDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
+	// create config/status dirs
+	var noObjTypes []string
+	watch.CreateConfigStatusDirs(moduleName, noObjTypes)
 
 	var restartFn watch.ConfigRestartHandler = handleRestart
 

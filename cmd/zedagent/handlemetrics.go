@@ -6,7 +6,6 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/shirou/gopsutil/cpu"
 	"github.com/shirou/gopsutil/disk"
-	"github.com/shirou/gopsutil/host"
 	"github.com/shirou/gopsutil/mem"
 	psutilnet "github.com/shirou/gopsutil/net"
 	"github.com/zededa/api/zmet"
@@ -22,8 +21,8 @@ import (
 )
 
 const (
-	baseDirname   = "/var/tmp/zedrouter"
-	configDirname = baseDirname + "/config"
+	zedrouterModulename    = "zedrouter"
+	zedrouterConfigDirname = zedBaseDirname + "/" + zedrouterModulename + "/config"
 )
 
 func publishMetrics(iteration int) {
@@ -269,7 +268,7 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 	SendMetricsProtobufStrThroughHttp(ReportMetrics, iteration)
 }
 
-func PublishDeviceInfoToZedCloud(iteration int) {
+func PublishDeviceInfoToZedCloud(baseOsStatus map[string]types.BaseOsStatus, iteration int) {
 
 	var ReportInfo = &zmet.ZInfoMsg{}
 
@@ -338,14 +337,18 @@ func PublishDeviceInfoToZedCloud(iteration int) {
 	} else {
 		log.Println("fill manufacturer info for arm...") //XXX FIXME
 	}
-	ReportDeviceSoftwareInfo := new(zmet.ZInfoSW)
-	systemHost, err := host.Info()
-	if err != nil {
-		log.Println(err)
+
+	ReportDeviceInfo.SoftwareList = make([]*zmet.ZInfoSW, len(baseOsStatus))
+	var idx int = 0
+	for _, value := range baseOsStatus {
+		ReportDeviceSoftwareInfo := new(zmet.ZInfoSW)
+		ReportDeviceSoftwareInfo.SwVersion = value.BaseOsVersion
+		ReportDeviceSoftwareInfo.SwHash = value.ConfigSha256
+		ReportDeviceSoftwareInfo.State = zmet.ZSwState(value.State)
+		ReportDeviceSoftwareInfo.Activated = value.Activated
+		ReportDeviceInfo.SoftwareList[idx] = ReportDeviceSoftwareInfo
+		idx++
 	}
-	ReportDeviceSoftwareInfo.SwVersion = systemHost.KernelVersion //XXX for now we are filling kernel version...
-	ReportDeviceSoftwareInfo.SwHash = *proto.String(" ")
-	ReportDeviceInfo.Software = ReportDeviceSoftwareInfo
 
 	//read interface name from library
 	//and match it with uplink name from
@@ -372,8 +375,8 @@ func PublishDeviceInfoToZedCloud(iteration int) {
 		x.Dinfo = ReportDeviceInfo
 	}
 
-	fmt.Println(ReportInfo)
-	fmt.Println(" ")
+	log.Println(ReportInfo)
+	log.Println(" ")
 
 	SendInfoProtobufStrThroughHttp(ReportInfo, iteration)
 }
@@ -419,8 +422,8 @@ func PublishHypervisorInfoToZedCloud(iteration int) {
 		x.Hinfo = ReportHypervisorInfo
 	}
 
-	fmt.Println(ReportInfo)
-	fmt.Println(" ")
+	log.Println(ReportInfo)
+	log.Println(" ")
 
 	SendInfoProtobufStrThroughHttp(ReportInfo, iteration)
 }
@@ -469,8 +472,8 @@ func PublishAppInfoToZedCloud(uuid string, aiStatus *types.AppInstanceStatus,
 		x.Ainfo = ReportAppInfo
 	}
 
-	fmt.Println(ReportInfo)
-	fmt.Println(" ")
+	log.Println(ReportInfo)
+	log.Println(" ")
 
 	SendInfoProtobufStrThroughHttp(ReportInfo, iteration)
 }
@@ -482,7 +485,7 @@ func SendInfoProtobufStrThroughHttp(ReportInfo *zmet.ZInfoMsg, iteration int) {
 
 	data, err := proto.Marshal(ReportInfo)
 	if err != nil {
-		fmt.Println("marshaling error: ", err)
+		log.Println("marshaling error: ", err)
 		return
 	}
 
@@ -544,7 +547,7 @@ func SendMetricsProtobufStrThroughHttp(ReportMetrics *zmet.ZMetricMsg,
 	iteration int) {
 	data, err := proto.Marshal(ReportMetrics)
 	if err != nil {
-		fmt.Println("marshaling error: ", err)
+		log.Println("marshaling error: ", err)
 	}
 
 	intf, err := types.GetUplinkAny(deviceNetworkStatus, iteration)
@@ -565,7 +568,7 @@ func SendMetricsProtobufStrThroughHttp(ReportMetrics *zmet.ZMetricMsg,
 		}
 		localTCPAddr := net.TCPAddr{IP: localAddr}
 		// XXX makes logfile too long; debug flag?
-		fmt.Printf("Connecting to %s using intf %s source %v\n",
+		log.Printf("Connecting to %s using intf %s source %v\n",
 			metricsUrl, intf, localTCPAddr)
 
 		d := net.Dialer{LocalAddr: &localTCPAddr}
@@ -585,14 +588,14 @@ func SendMetricsProtobufStrThroughHttp(ReportMetrics *zmet.ZMetricMsg,
 		switch resp.StatusCode {
 		case http.StatusOK:
 			// XXX makes logfile too long; debug flag?
-			fmt.Printf("SendMetricsProtobufStrThroughHttp to %s using intf %s source %v StatusOK\n",
+			log.Printf("SendMetricsProtobufStrThroughHttp to %s using intf %s source %v StatusOK\n",
 				metricsUrl, intf, localTCPAddr)
 			return
 		default:
-			fmt.Printf("SendMetricsProtobufStrThroughHttp to %s using intf %s source %v  statuscode %d %s\n",
+			log.Printf("SendMetricsProtobufStrThroughHttp to %s using intf %s source %v  statuscode %d %s\n",
 				metricsUrl, intf, localTCPAddr,
 				resp.StatusCode, http.StatusText(resp.StatusCode))
-			fmt.Printf("received response %v\n", resp)
+			log.Printf("received response %v\n", resp)
 		}
 	}
 	log.Printf("All attempts to connect to %s using intf %s failed\n",

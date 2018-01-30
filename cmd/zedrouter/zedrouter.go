@@ -28,12 +28,15 @@ import (
 
 // Keeping status in /var/run to be clean after a crash/reboot
 const (
-	runDirname    = "/var/run/zedrouter"
-	baseDirname   = "/var/tmp/zedrouter"
-	configDirname = baseDirname + "/config"
-	statusDirname = runDirname + "/status"
-	DNCDirname    = "/var/tmp/zededa/DeviceNetworkConfig"
-	DNSDirname    = runDirname + "/DeviceNetworkStatus"
+	moduleName     = "zedrouter"
+	zedBaseDirname = "/var/tmp"
+	zedRunDirname  = "/var/run"
+	baseDirname    = zedBaseDirname + "/" + moduleName
+	runDirname     = zedRunDirname + "/" + moduleName
+	configDirname  = baseDirname + "/config"
+	statusDirname  = runDirname + "/status"
+	DNCDirname     = "/var/tmp/zededa/DeviceNetworkConfig"
+	DNSDirname     = runDirname + "/DeviceNetworkStatus"
 )
 
 // Set from Makefile
@@ -51,31 +54,13 @@ func main() {
 	log.Printf("Starting zedrouter\n")
 	watch.CleanupRestarted("zedrouter")
 
-	if _, err := os.Stat(baseDirname); err != nil {
-		if err := os.Mkdir(baseDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-	if _, err := os.Stat(configDirname); err != nil {
-		if err := os.Mkdir(configDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-	if _, err := os.Stat(runDirname); err != nil {
-		if err := os.Mkdir(runDirname, 0755); err != nil {
-			log.Fatal(err)
-		}
-	} else {
-		// dnsmasq needs to read as nobody
-		if err := os.Chmod(runDirname, 0755); err != nil {
-			log.Fatal(err)
-		}
-	}
+	// create config/status dirs
+	var noObjTypes []string
+	watch.CreateConfigStatusDirs(moduleName, noObjTypes)
 
-	if _, err := os.Stat(statusDirname); err != nil {
-		if err := os.Mkdir(statusDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
+	// dnsmasq needs to read as nobody
+	if err := os.Chmod(runDirname, 0755); err != nil {
+		log.Fatal(err)
 	}
 	if _, err := os.Stat(DNCDirname); err != nil {
 		if err := os.MkdirAll(DNCDirname, 0700); err != nil {
@@ -87,14 +72,15 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+
 	appNumAllocatorInit(statusDirname, configDirname)
 
-	handleInit(DNCDirname + "/global.json", DNSDirname + "/global.json",
+	handleInit(DNCDirname+"/global.json", DNSDirname+"/global.json",
 		runDirname)
 
 	// Wait for zedmanager having populated the intial files to
 	// reduce the number of LISP-RESTARTs
-	restartFile := "/var/tmp/zedrouter/config/restart"
+	restartFile := configDirname + "/restart"
 	log.Printf("Waiting for zedmanager to report in %s\n", restartFile)
 	watch.WaitForFile(restartFile)
 	log.Printf("Zedmanager reported in %s\n", restartFile)
@@ -116,7 +102,6 @@ func main() {
 			log.Printf("No address change for %s\n", ifname)
 		}
 	}
-	
 	routeChanges, addrChanges, linkChanges := PbrInit(
 		deviceNetworkConfig.Uplink, deviceNetworkConfig.FreeUplinks,
 		addrChangeFn)
@@ -130,14 +115,14 @@ func main() {
 	go watch.WatchStatus(DNCDirname, deviceConfigChanges)
 	for {
 		select {
-		case change := <- configChanges:
+		case change := <-configChanges:
 			watch.HandleConfigStatusEvent(change,
 				configDirname, statusDirname,
 				&types.AppNetworkConfig{},
 				&types.AppNetworkStatus{},
 				handleCreate, handleModify, handleDelete,
 				&restartFn)
-		case change := <- deviceConfigChanges:
+		case change := <-deviceConfigChanges:
 			watch.HandleStatusEvent(change,
 				DNCDirname,
 				&types.DeviceNetworkConfig{},
@@ -342,7 +327,7 @@ func generateAdditionalInfo(status types.AppNetworkStatus, olConfig types.Overla
 	}
 	return additionalInfo
 }
-		
+
 func updateLispConfiglets() {
 	for _, status := range appNetworkStatus {
 		for i, olStatus := range status.OverlayNetworkList {
@@ -354,7 +339,7 @@ func updateLispConfiglets() {
 			} else {
 				olIfname = "bo" + strconv.Itoa(olNum) + "x" +
 					strconv.Itoa(status.AppNum)
-			}	
+			}
 			additionalInfo := generateAdditionalInfo(status,
 				olStatus.OverlayNetworkConfig)
 			log.Printf("updateLispConfiglets for %s isMgmt %v\n",

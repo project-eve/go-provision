@@ -47,39 +47,41 @@ func handleLookUpParam(devConfig *zconfig.EdgeDevConfig) {
 
 	log.Printf("handleLookupParam got config %v\n", devConfig)
 	lispInfo := devConfig.LispInfo
+
 	if lispInfo == nil {
-		log.Printf("handleLookupParam: missing lispInfo\n");
-	}
-	device.LispInstance = lispInfo.LispInstance
-	device.EID = net.ParseIP(lispInfo.EID)
-	device.EIDHashLen = uint8(lispInfo.EIDHashLen)
-	device.EidAllocationPrefix = lispInfo.EidAllocationPrefix
-	device.EidAllocationPrefixLen = int(lispInfo.EidAllocationPrefixLen)
-	device.ClientAddr = lispInfo.ClientAddr
-	device.LispMapServers = make([]types.LispServerInfo, len(lispInfo.LispMapServers))
-	var lmsx int = 0
-	for _, lms := range lispInfo.LispMapServers {
+		log.Printf("handleLookupParam: missing lispInfo\n")
+	} else {
+		device.LispInstance = lispInfo.LispInstance
+		device.EID = net.ParseIP(lispInfo.EID)
+		device.EIDHashLen = uint8(lispInfo.EIDHashLen)
+		device.EidAllocationPrefix = lispInfo.EidAllocationPrefix
+		device.EidAllocationPrefixLen = int(lispInfo.EidAllocationPrefixLen)
+		device.ClientAddr = lispInfo.ClientAddr
+		device.LispMapServers = make([]types.LispServerInfo, len(lispInfo.LispMapServers))
+		var lmsx int = 0
+		for _, lms := range lispInfo.LispMapServers {
 
-		lispServerDetail := new(types.LispServerInfo)
-		lispServerDetail.NameOrIp = lms.NameOrIp
-		lispServerDetail.Credential = lms.Credential
-		device.LispMapServers[lmsx] = *lispServerDetail
-		lmsx++
-	}
-	device.ZedServers.NameToEidList = make([]types.NameToEid, len(lispInfo.ZedServers))
-	var zsx int = 0
-	for _, zs := range lispInfo.ZedServers {
-
-		nameToEidInfo := new(types.NameToEid)
-		nameToEidInfo.HostName = zs.HostName
-		nameToEidInfo.EIDs = make([]net.IP, len(zs.EID))
-		var eidx int = 0
-		for _, eid := range zs.EID {
-			nameToEidInfo.EIDs[eidx] = net.ParseIP(eid)
-			eidx++
+			lispServerDetail := new(types.LispServerInfo)
+			lispServerDetail.NameOrIp = lms.NameOrIp
+			lispServerDetail.Credential = lms.Credential
+			device.LispMapServers[lmsx] = *lispServerDetail
+			lmsx++
 		}
-		device.ZedServers.NameToEidList[zsx] = *nameToEidInfo
-		zsx++
+
+		device.ZedServers.NameToEidList = make([]types.NameToEid, len(lispInfo.ZedServers))
+		var zsx int = 0
+		for _, zs := range lispInfo.ZedServers {
+			nameToEidInfo := new(types.NameToEid)
+			nameToEidInfo.HostName = zs.HostName
+			nameToEidInfo.EIDs = make([]net.IP, len(zs.EID))
+			var eidx int = 0
+			for _, eid := range zs.EID {
+				nameToEidInfo.EIDs[eidx] = net.ParseIP(eid)
+				eidx++
+			}
+			device.ZedServers.NameToEidList[zsx] = *nameToEidInfo
+			zsx++
+		}
 	}
 
 	// Load device cert
@@ -91,7 +93,7 @@ func handleLookUpParam(devConfig *zconfig.EdgeDevConfig) {
 
 	ACLPromisc := false
 	if _, err := os.Stat(infraFileName); err == nil {
-		fmt.Printf("Setting ACLPromisc\n")
+		log.Printf("Setting ACLPromisc\n")
 		ACLPromisc = true
 	}
 
@@ -120,7 +122,7 @@ func handleLookUpParam(devConfig *zconfig.EdgeDevConfig) {
 		if err != nil {
 			log.Fatal("WriteFile", err, uuidFileName)
 		}
-		fmt.Printf("Created UUID %s\n", devUUID)
+		log.Printf("Created UUID %s\n", devUUID)
 	} else {
 		b, err := ioutil.ReadFile(uuidFileName)
 		if err != nil {
@@ -131,7 +133,7 @@ func handleLookUpParam(devConfig *zconfig.EdgeDevConfig) {
 		if err != nil {
 			log.Fatal("uuid.FromString", err, string(b))
 		}
-		fmt.Printf("Read UUID %s\n", devUUID)
+		log.Printf("Read UUID %s\n", devUUID)
 	}
 
 	// If we got a StatusNotFound the EID will be zero
@@ -150,13 +152,13 @@ func handleLookUpParam(devConfig *zconfig.EdgeDevConfig) {
 	// RFC 5952. The iid is printed as an integer.
 	sigdata := fmt.Sprintf("[%d]%s",
 		device.LispInstance, device.EID.String())
-	fmt.Printf("sigdata (len %d) %s\n", len(sigdata), sigdata)
+	log.Printf("sigdata (len %d) %s\n", len(sigdata), sigdata)
 
 	hasher := sha256.New()
 	hasher.Write([]byte(sigdata))
 	hash := hasher.Sum(nil)
-	fmt.Printf("hash (len %d) % x\n", len(hash), hash)
-	fmt.Printf("base64 hash %s\n",
+	log.Printf("hash (len %d) % x\n", len(hash), hash)
+	log.Printf("base64 hash %s\n",
 		base64.StdEncoding.EncodeToString(hash))
 
 	var signature string
@@ -169,19 +171,19 @@ func handleLookUpParam(devConfig *zconfig.EdgeDevConfig) {
 		if err != nil {
 			log.Fatal("ecdsa.Sign: ", err)
 		}
-		fmt.Printf("r.bytes %d s.bytes %d\n", len(r.Bytes()),
+		log.Printf("r.bytes %d s.bytes %d\n", len(r.Bytes()),
 			len(s.Bytes()))
 		sigres := r.Bytes()
 		sigres = append(sigres, s.Bytes()...)
-		fmt.Printf("sigres (len %d): % x\n", len(sigres), sigres)
+		log.Printf("sigres (len %d): % x\n", len(sigres), sigres)
 		signature = base64.StdEncoding.EncodeToString(sigres)
-		fmt.Println("signature:", signature)
+		log.Println("signature:", signature)
 	}
-	fmt.Printf("UserName %s\n", device.UserName)
-	fmt.Printf("MapServers %s\n", device.LispMapServers)
-	fmt.Printf("Lisp IID %d\n", device.LispInstance)
-	fmt.Printf("EID %s\n", device.EID)
-	fmt.Printf("EID hash length %d\n", device.EIDHashLen)
+	log.Printf("UserName %s\n", device.UserName)
+	log.Printf("MapServers %s\n", device.LispMapServers)
+	log.Printf("Lisp IID %d\n", device.LispInstance)
+	log.Printf("EID %s\n", device.EID)
+	log.Printf("EID hash length %d\n", device.EIDHashLen)
 
 	// write zedserverconfig file with hostname to EID mappings
 	f, err := os.Create(zedserverConfigFileName)
@@ -252,7 +254,7 @@ func handleLookUpParam(devConfig *zconfig.EdgeDevConfig) {
 
 func writeNetworkConfig(config *types.AppNetworkConfig,
 	configFilename string) {
-	fmt.Printf("Writing AppNetworkConfig to %s\n", configFilename)
+	log.Printf("Writing AppNetworkConfig to %s\n", configFilename)
 	b, err := json.Marshal(config)
 	if err != nil {
 		log.Fatal(err, "json Marshal AppNetworkConfig")

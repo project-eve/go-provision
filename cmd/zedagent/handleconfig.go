@@ -98,14 +98,15 @@ func getCloudUrls() {
 // for each of the above buckets
 
 func configTimerTask() {
+
 	iteration := 0
-	fmt.Println("starting config fetch timer task")
+	log.Println("starting config fetch timer task")
 	getLatestConfig(configUrl, iteration)
 
 	ticker := time.NewTicker(time.Minute * configTickTimeout)
 
 	for t := range ticker.C {
-		fmt.Println(t)
+		log.Println(t)
 		iteration += 1
 		getLatestConfig(configUrl, iteration)
 	}
@@ -116,7 +117,7 @@ func configTimerTask() {
 func getLatestConfig(configUrl string, iteration int) {
 	intf, err := types.GetUplinkAny(deviceNetworkStatus, iteration)
 	if err != nil {
-		log.Printf("getLatestConfig: %s\n", err)
+		log.Printf("getLatestConfig:%v\n", err)
 		return
 	}
 	addrCount := types.CountLocalAddrAny(deviceNetworkStatus, intf)
@@ -153,7 +154,7 @@ func getLatestConfig(configUrl string, iteration int) {
 		}
 		config, err := readDeviceConfigProtoMessage(resp)
 		if err != nil {
-			log.Println("readDeviceConfigProtoMessage: ", err)
+			log.Println("readDeviceConfigProtoMessage:%v\n", err)
 			return
 		}
 		inhaleDeviceConfig(config)
@@ -172,13 +173,13 @@ func validateConfigMessage(configUrl string, intf string,
 	switch r.StatusCode {
 	case http.StatusOK:
 		// XXX makes logfile too long; debug flag?
-		fmt.Printf("validateConfigMessage %s using intf %s source %v StatusOK\n",
+		log.Printf("validateConfigMessage %s using intf %s source %v StatusOK\n",
 			configUrl, intf, localTCPAddr)
 	default:
-		fmt.Printf("validateConfigMessage %s using intf %s source %v statuscode %d %s\n",
+		log.Printf("validateConfigMessage %s using intf %s source %v statuscode %d %s\n",
 			configUrl, intf, localTCPAddr,
 			r.StatusCode, http.StatusText(r.StatusCode))
-		fmt.Printf("received response %v\n", r)
+		log.Printf("received response %v\n", r)
 		return fmt.Errorf("http status %d %s",
 			r.StatusCode, http.StatusText(r.StatusCode))
 	}
@@ -208,8 +209,7 @@ func readDeviceConfigProtoMessage(r *http.Response) (*zconfig.EdgeDevConfig, err
 		fmt.Println(err)
 		return nil, err
 	}
-	//log.Println(" proto bytes(config) received from cloud: ", fmt.Sprintf("%s",bytes))
-	log.Printf("parsing proto %d bytes\n", len(bytes))
+
 	err = proto.Unmarshal(bytes, config)
 	if err != nil {
 		log.Println("Unmarshalling failed: %v", err)
@@ -236,7 +236,57 @@ func inhaleDeviceConfig(config *zconfig.EdgeDevConfig) {
 		}
 		activeVersion = devId.Version
 	}
+
 	handleLookUpParam(config)
+
+	// delete old app configs, if any
+	checkCurrentAppFiles(config)
+
+	// delete old baseOs configs, if any
+	checkCurrentBaseOsFiles(config)
+
+	// handle any new baseOs/App config
+	parseConfig(config)
+}
+
+func checkCurrentBaseOsFiles(config *zconfig.EdgeDevConfig) {
+
+	// get the current set of baseOs files
+	curBaseOsFilenames, err := ioutil.ReadDir(zedagentBaseOsConfigDirname)
+
+	if err != nil {
+		log.Printf("read dir %s fail, err: %v\n", zedagentBaseOsConfigDirname, err)
+		curBaseOsFilenames = nil
+	}
+
+	baseOses := config.GetBase()
+	// delete any baseOs config which is not present in the new set
+	for _, curBaseOs := range curBaseOsFilenames {
+		curBaseOsFilename := curBaseOs.Name()
+
+		// file type json
+		if strings.HasSuffix(curBaseOsFilename, ".json") {
+			found := false
+			for _, baseOs := range baseOses {
+				baseOsFilename := baseOs.Uuidandversion.Uuid + ".json"
+				if baseOsFilename == curBaseOsFilename {
+					found = true
+					break
+				}
+			}
+			// baseOS instance not found, delete
+			if !found {
+				log.Printf("Remove baseOs config %s\n", curBaseOsFilename)
+				err := os.Remove(zedagentBaseOsConfigDirname + "/" + curBaseOsFilename)
+				if err != nil {
+					log.Printf("Old config:%v\n", err)
+				}
+			}
+		}
+	}
+}
+
+func checkCurrentAppFiles(config *zconfig.EdgeDevConfig) {
 
 	// get the current set of App files
 	curAppFilenames, err := ioutil.ReadDir(zedmanagerConfigDirname)
@@ -271,6 +321,4 @@ func inhaleDeviceConfig(config *zconfig.EdgeDevConfig) {
 			}
 		}
 	}
-	// add new App instances
-	parseConfig(config)
 }

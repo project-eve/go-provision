@@ -26,15 +26,19 @@ import (
 
 // Keeping status in /var/run to be clean after a crash/reboot
 const (
-	baseDirname       = "/var/tmp/domainmgr"
-	runDirname        = "/var/run/domainmgr"
+	appImgObj         = "appImg.obj"
+	moduleName        = "domainmgr"
+	zedBaseDirname    = "/var/tmp"
+	zedRunDirname     = "/var/run"
+	baseDirname       = zedBaseDirname + "/" + moduleName
+	runDirname        = zedRunDirname + "/" + moduleName
 	configDirname     = baseDirname + "/config"
 	statusDirname     = runDirname + "/status"
 	rwImgDirname      = baseDirname + "/img" // We store images here
 	xenDirname        = runDirname + "/xen"  // We store xen cfg files here
 	imgCatalogDirname = "/var/tmp/zedmanager/downloads"
 	// Read-only images named based on sha256 hash each in its own directory
-	verifiedDirname = imgCatalogDirname + "/verified"
+	verifiedDirname = imgCatalogDirname + "/" + appImgObj + "/verified"
 )
 
 // Set from Makefile
@@ -51,50 +55,6 @@ func main() {
 	}
 	log.Printf("Starting domainmgr\n")
 	watch.CleanupRestarted("domainmgr")
-
-	if _, err := os.Stat(baseDirname); err != nil {
-		if err := os.MkdirAll(baseDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-	if _, err := os.Stat(configDirname); err != nil {
-		if err := os.MkdirAll(configDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-	if _, err := os.Stat(runDirname); err != nil {
-		if err := os.MkdirAll(runDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-	if _, err := os.Stat(statusDirname); err != nil {
-		if err := os.MkdirAll(statusDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-	if err := os.RemoveAll(xenDirname); err != nil {
-		log.Fatal(err)
-	}
-	if _, err := os.Stat(rwImgDirname); err != nil {
-		if err := os.MkdirAll(rwImgDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-	if _, err := os.Stat(xenDirname); err != nil {
-		if err := os.MkdirAll(xenDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-	if _, err := os.Stat(imgCatalogDirname); err != nil {
-		if err := os.MkdirAll(imgCatalogDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-	if _, err := os.Stat(verifiedDirname); err != nil {
-		if err := os.MkdirAll(verifiedDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
 
 	handleInit()
 
@@ -152,9 +112,38 @@ func findActiveFileLocation(filename string) bool {
 var domainStatusMap map[string]types.DomainStatus
 
 func handleInit() {
+
+	initializeDirs()
+
 	if domainStatusMap == nil {
-		fmt.Printf("create domainStatusMap\n")
+		log.Printf("create domainStatusMap\n")
 		domainStatusMap = make(map[string]types.DomainStatus)
+	}
+}
+
+func initializeDirs() {
+
+	objTypes := []string{appImgObj}
+	var noObjTypes []string
+
+	// create config/status dirs
+	watch.CreateConfigStatusDirs(moduleName, noObjTypes)
+
+	// and appImg Holder
+	types.CreateDownloadDirs(objTypes)
+
+	if err := os.RemoveAll(xenDirname); err != nil {
+		log.Fatal(err)
+	}
+	if _, err := os.Stat(rwImgDirname); err != nil {
+		if err := os.MkdirAll(rwImgDirname, 0700); err != nil {
+			log.Fatal(err)
+		}
+	}
+	if _, err := os.Stat(xenDirname); err != nil {
+		if err := os.MkdirAll(xenDirname, 0700); err != nil {
+			log.Fatal(err)
+		}
 	}
 }
 

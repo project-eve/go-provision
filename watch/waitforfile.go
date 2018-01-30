@@ -42,7 +42,7 @@ func WaitForFile(filename string) {
 					}
 					break
 				}
-				if event.Op & fsnotify.Create != 0 {
+				if event.Op&fsnotify.Create != 0 {
 					done <- true
 				}
 			case err := <-w.Errors:

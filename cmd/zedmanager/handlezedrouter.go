@@ -75,7 +75,7 @@ func MaybeAddAppNetworkConfig(aiConfig types.AppInstanceConfig,
 			}
 		}
 	} else {
-		fmt.Printf("appNetwork config add for %s\n", key)
+		log.Printf("appNetwork config add for %s\n", key)
 		changed = true
 	}
 	if changed {
@@ -140,6 +140,7 @@ func writeAppNetworkConfig(config types.AppNetworkConfig,
 	}
 	// We assume a /var/run path hence we don't need to worry about
 	// partial writes/empty files due to a kernel crash.
+	log.Printf("Writing %s for AppNetworkConfig", configFilename)
 	err = ioutil.WriteFile(configFilename, b, 0644)
 	if err != nil {
 		log.Fatal(err, configFilename)

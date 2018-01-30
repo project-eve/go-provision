@@ -149,7 +149,7 @@ func PbrAddrChange(change netlink.AddrUpdate) {
 	// XXX remove?
 	log.Printf("PbrAddrChange: new %v if %d addr %v\n", change.NewAddr,
 		change.LinkIndex, change.LinkAddress)
-	changed := false     
+	changed := false
 	if change.NewAddr {
 		changed = IfindexToAddrsAdd(change.LinkIndex,
 			change.LinkAddress)
