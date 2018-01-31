@@ -195,6 +195,15 @@ message deviceMetric {
   memoryMetric memory = 2;
   repeated networkMetric network = 3;
 }
+message appMetric {
+  appCpuMetric cpu = 1;
+  memoryMetric memory = 2;
+  repeated networkMetric network = 3;
+}
+message appCpuMetric {
+    uint32 upTime = 2;
+	double cpuUtilization = 3;
+}
 
 message appMetric {
   string AppID  = 1;
