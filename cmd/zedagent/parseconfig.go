@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net"
+	"os"
 	"strings"
 	"syscall"
 	"time"
@@ -25,10 +26,11 @@ const (
 	finalDirname         = imgCatalogDirname + "/verified"
 	certsDownloadDirname = imgCatalogDirname + "/certs" // XXX vs. cert.obj?
 	certificateDirname   = "/var/tmp/zedmanager/certs"
+	rebootConfigFilename = "/opt/zededa/etc/rebootConfig"
 )
 
-var rebootConfig, backupConfig *zconfig.DeviceOpsCmd
-var rebootTimer, backupTimer *time.Timer
+var immediate int = 10 // take a 10 second delay
+var rebootTimer *time.Timer
 
 func parseConfig(config *zconfig.EdgeDevConfig) {
 
@@ -143,17 +145,25 @@ func scheduleReboot(reboot *zconfig.DeviceOpsCmd) {
 		if rebootTimer != nil {
 			rebootTimer.Stop()
 		}
-		rebootConfig = nil
+		// remove the existing file
+		os.Remove(rebootConfigFilename)
 		return
 	}
 
 	log.Printf("Reboot Config: %v\n", reboot)
 
-	if rebootConfig == nil {
-		rebootConfig = &zconfig.DeviceOpsCmd{}
+	rebootConfig := &zconfig.DeviceOpsCmd{}
+
+	// read old reboot config
+	if _, err := os.Stat(rebootConfigFilename); err == nil {
+		bytes, err := ioutil.ReadFile(rebootConfigFilename)
+		if err == nil {
+			err = json.Unmarshal(bytes, rebootConfig)
+		}
 	}
 
-	// time counter value has changed
+	// counter value has changed
+	// means new reboot event
 	if (rebootConfig == nil) ||
 		(rebootConfig.Counter != reboot.Counter) {
 
@@ -163,80 +173,58 @@ func scheduleReboot(reboot *zconfig.DeviceOpsCmd) {
 		}
 
 		// start the timer again
-		duration := time.Duration(reboot.Counter)
+		// XXX:FIXME, need to handle the sheduled time
+		duration := time.Duration(immediate)
 		rebootTimer = time.NewTimer(time.Second * duration)
 
 		go handleReboot()
 	}
 
-	// store current config
+	// store current config, persistently
 	rebootConfig = reboot
+	bytes, err := json.Marshal(rebootConfig)
+	if err == nil {
+		ioutil.WriteFile(rebootConfigFilename, bytes, 0644)
+	}
 }
 
 func scheduleBackup(backup *zconfig.DeviceOpsCmd) {
 
-	if backup == nil {
-
-		// stop the timer
-		if backupTimer != nil {
-			backupTimer.Stop()
-		}
-		backupConfig = nil
-		return
-	}
-
+	// XXX:FIXME  handle baackup semantics
 	log.Printf("Backup Config: %v\n", backup)
-
-	if backupConfig == nil {
-		backupConfig = &zconfig.DeviceOpsCmd{}
-	}
-
-	// time counter value has changed
-	if (backupConfig == nil) ||
-		(backupConfig.Counter != backup.Counter) {
-
-		//timer was started, stop now
-		if backupTimer != nil {
-			backupTimer.Stop()
-		}
-
-		// start the timer again
-		duration := time.Duration(backup.Counter)
-		backupTimer = time.NewTimer(time.Second * duration)
-
-		go handleBackup()
-	}
-
-	backupConfig = backup
 }
 
 // the timer channel handler
 func handleReboot() {
 
+	rebootConfig := &zconfig.DeviceOpsCmd{}
+
 	<-rebootTimer.C
+
+	// read reboot config
+	if _, err := os.Stat(rebootConfigFilename); err == nil {
+		bytes, err := ioutil.ReadFile(rebootConfigFilename)
+		if err == nil {
+			err = json.Unmarshal(bytes, rebootConfig)
+		}
+	}
+
+	if rebootConfig == nil {
+		return
+	}
 
 	// XXX:FIXME perform graceful service stop/ state backup
 
 	switch rebootConfig.DesriedState {
 
 	case true:
-		log.Printf("Rebootiing...\n")
+		log.Printf("Rebooting...\n")
 		syscall.Reboot(0)
 
 	case false:
 		log.Printf("Powering Off...\n")
 		syscall.Shutdown(0, 0)
 	}
-}
-
-// the timer channel handler
-func handleBackup() {
-
-	<-backupTimer.C
-
-	log.Printf("Initiating backup...\n")
-
-	// XXX:FIXME implement backup shemantics
 }
 
 func parseNetworkConfig(appInstance *types.AppInstanceConfig,
