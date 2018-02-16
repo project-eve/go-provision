@@ -36,12 +36,15 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/satori/go.uuid"
 	"github.com/zededa/go-provision/assignableadapters"
 	"github.com/zededa/go-provision/hardware"
 	"github.com/zededa/go-provision/types"
 	"github.com/zededa/go-provision/watch"
+	"io/ioutil"
 	"log"
 	"os"
+	"strings"
 )
 
 // Keeping status in /var/run to be clean after a crash/reboot
@@ -99,7 +102,9 @@ const (
 // Set from Makefile
 var Version = "No version specified"
 
+// XXX remove global variables
 var deviceNetworkStatus types.DeviceNetworkStatus
+var deviceUUID uuid.UUID
 
 // Dummy used when we don't have anything to pass
 type dummyContext struct {
@@ -349,6 +354,20 @@ func handleVerifierRestarted(ctxArg interface{}, done bool) {
 }
 
 func handleInit() {
+	// Determine our UUID
+	if _, err := os.Stat(uuidFileName); err != nil {
+		log.Fatalf("We don't have a UUID %s\n", err)
+	}
+	b, err := ioutil.ReadFile(uuidFileName)
+	if err != nil {
+		log.Fatal("ReadFile", err, uuidFileName)
+	}
+	uuidStr := strings.TrimSpace(string(b))
+	deviceUUID, err = uuid.FromString(uuidStr)
+	if err != nil {
+		log.Fatal("uuid.FromString", err, string(b))
+	}
+	fmt.Printf("Read UUID %s\n", deviceUUID)
 
 	initializeDirs()
 	initMaps()
