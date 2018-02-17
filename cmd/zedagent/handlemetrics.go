@@ -279,7 +279,7 @@ func PublishMetricsToZedCloud(cpuStorageStat [][]string, iteration int) {
 	ReportDeviceMetric.Memory = new(zmet.MemoryMetric)
 	ReportDeviceMetric.Compute = new(zmet.DevCpuMetric)
 
-	ReportMetrics.DevID = *proto.String(deviceId)
+	ReportMetrics.DevID = *proto.String(deviceUUID.String())
 	ReportZmetric := new(zmet.ZmetricTypes)
 	*ReportZmetric = zmet.ZmetricTypes_ZmDevice
 
@@ -539,7 +539,7 @@ func PublishDeviceInfoToZedCloud(baseOsStatus map[string]types.BaseOsStatus,
 	deviceType := new(zmet.ZInfoTypes)
 	*deviceType = zmet.ZInfoTypes_ZiDevice
 	ReportInfo.Ztype = *deviceType
-	ReportInfo.DevId = *proto.String(deviceId)
+	ReportInfo.DevId = *proto.String(deviceUUID.String())
 
 	ReportDeviceInfo := new(zmet.ZInfoDevice)
 
@@ -793,7 +793,7 @@ func PublishAppInfoToZedCloud(uuid string, aiStatus *types.AppInstanceStatus,
 	appType := new(zmet.ZInfoTypes)
 	*appType = zmet.ZInfoTypes_ZiApp
 	ReportInfo.Ztype = *appType
-	ReportInfo.DevId = *proto.String(deviceId)
+	ReportInfo.DevId = *proto.String(deviceUUID.String())
 
 	ReportAppInfo := new(zmet.ZInfoApp)
 

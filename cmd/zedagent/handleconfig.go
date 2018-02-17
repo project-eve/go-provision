@@ -33,11 +33,6 @@ var configApi string = "api/v1/edgedevice/config"
 var statusApi string = "api/v1/edgedevice/info"
 var metricsApi string = "api/v1/edgedevice/metrics"
 
-// XXX remove global variables
-// XXX shouldn't we know our own device UUID? Get from some global struct?
-// Or read from uuid file?
-var deviceId string
-
 // These URLs are effectively constants; depends on the server name
 var configUrl string
 var metricsUrl string
@@ -287,15 +282,16 @@ func inhaleDeviceConfig(config *zconfig.EdgeDevConfig) {
 	var devId = &zconfig.UUIDandVersion{}
 
 	devId = config.GetId()
-	if devId != nil {
-		// store the device id
-		deviceId = devId.Uuid
-		if devId.Version == activeVersion {
-			log.Printf("Same version, skipping:%v\n", config.Id.Version)
-			return
-		}
-		activeVersion = devId.Version
+	if deviceUUID.String() != devId.Uuid {
+		log.Printf("Config to for us: %s, got %s\n",
+			deviceUUID.String(), devId.Uuid)
+		return
 	}
+	if devId.Version == activeVersion {
+		log.Printf("Same version, skipping:%v\n", config.Id.Version)
+		return
+	}
+	activeVersion = devId.Version
 	handleLookUpParam(config)
 
 	// delete old app configs, if any
