@@ -35,6 +35,7 @@ const (
 	serverFilename  = identityDirname + "/server"
 	uuidFileName    = identityDirname + "/uuid"
 	DNSDirname      = "/var/run/zedrouter/DeviceNetworkStatus"
+	xenLogDirname   = "/var/log/xen"
 )
 
 var devUUID uuid.UUID
@@ -79,6 +80,8 @@ type logfileReader struct {
 	reader   *bufio.Reader
 	size     int64 // To detect file truncation
 }
+
+var xenDomULoggerMap map[string]*loggerContext
 
 // Context for handleDNSModify
 type DNSContext struct {
@@ -147,6 +150,7 @@ func main() {
 	}
 	loggerChan := make(chan logEntry)
 	ctx := loggerContext{logChan: loggerChan, image: currentPartition}
+	xenCtx := loggerContext{logChan: loggerChan}
 	// Start sender of log events
 	// XXX or we run this in main routine and the logDirChanges loop
 	// in a go routine??
@@ -183,6 +187,8 @@ func main() {
 	go watch.WatchStatus(logDirName, logDirChanges)
 	lispLogDirChanges := make(chan string)
 	go watch.WatchStatus(lispLogDirName, lispLogDirChanges)
+	xenLogDirChanges := make(chan string)
+	go watch.WatchStatus(xenLogDirname, xenLogDirChanges)
 
 	log.Println("called watcher...")
 	for {
@@ -194,6 +200,10 @@ func main() {
 		case change := <-lispLogDirChanges:
 			HandleLogDirEvent(change, lispLogDirName, &ctx,
 				handleLogDirModify, handleLogDirDelete)
+
+		case change := <-xenLogDirChanges:
+			HandleLogDirEvent(change, xenLogDirname, &xenCtx,
+				handleXenLogDirModify, handleXenLogDirDelete)
 
 		case change := <-networkStatusChanges:
 			watch.HandleStatusEvent(change, &DNSctx,
@@ -253,7 +263,6 @@ func processEvents(image string, logChan <-chan logEntry) {
 				}
 				return
 			}
-				
 			HandleLogEvent(event, reportLogs, counter)
 			counter++
 
@@ -364,7 +373,8 @@ func sendCtxInit() {
 }
 
 func HandleLogDirEvent(change string, logDirName string, ctx *loggerContext,
-	handleLogDirModifyFunc logDirModifyHandler, handleLogDirDeleteFunc logDirDeleteHandler) {
+	handleLogDirModifyFunc logDirModifyHandler,
+	handleLogDirDeleteFunc logDirDeleteHandler) {
 
 	operation := string(change[0])
 	fileName := string(change[2:])
@@ -377,15 +387,58 @@ func HandleLogDirEvent(change string, logDirName string, ctx *loggerContext,
 	// Remove .log from name */
 	name := strings.Split(fileName, ".log")
 	source := name[0]
-	if operation == "D" {
+	switch operation {
+	case "D":
 		handleLogDirDeleteFunc(ctx, logFilePath, source)
-		return
-	}
-	if operation != "M" {
+
+	case "M":
+		handleLogDirModifyFunc(ctx, logFilePath, source)
+	default:
 		log.Fatal("Unknown operation from Watcher: ",
 			operation)
 	}
-	handleLogDirModifyFunc(ctx, logFilePath, source)
+}
+
+// If the filename is new we spawn a go routine which will read
+func handleXenLogDirModify(ctx *loggerContext, filename string, source string) {
+
+	if xenDomULoggerMap == nil {
+		xenDomULoggerMap = make(map[string]*loggerContext)
+	}
+
+	log.Printf("handleLogDirModify: add %s, source %s\n", filename, source)
+
+	domUCtx, ok := xenDomULoggerMap[filename]
+	if ok {
+		readLineToEvent(&domUCtx.logfileReaders[0], ctx.logChan)
+		return
+	}
+
+	domUCtx = &loggerContext{}
+	domUCtx.image = source //XXX FIXME Fill actual content for image
+	domUCtx.logChan = ctx.logChan
+
+	xenDomULoggerMap[filename] = domUCtx
+
+	fileDesc, err := os.Open(filename)
+	if err != nil {
+		log.Printf("Log file ignored due to %s\n", err)
+		return
+	}
+	// Start reading from the file with a reader.
+	reader := bufio.NewReader(fileDesc)
+	if reader == nil {
+		log.Printf("Log file ignored due to %s\n", err)
+		return
+	}
+	r := logfileReader{filename: filename,
+		source:   source,
+		fileDesc: fileDesc,
+		reader:   reader,
+	}
+	// read initial entries until EOF
+	readLineToEvent(&r, domUCtx.logChan)
+	domUCtx.logfileReaders = append(domUCtx.logfileReaders, r)
 }
 
 // If the filename is new we spawn a go routine which will read
@@ -420,6 +473,10 @@ func handleLogDirModify(ctx *loggerContext, filename string, source string) {
 
 // XXX TBD should we stop the go routine?
 func handleLogDirDelete(ctx *loggerContext, filename string, source string) {
+}
+
+// XXX TBD should we stop the go routine?
+func handleXenLogDirDelete(ctx *loggerContext, filename string, source string) {
 }
 
 // Read until EOF or error
