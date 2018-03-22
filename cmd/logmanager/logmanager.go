@@ -63,12 +63,14 @@ type logEntry struct {
 	source    string // basename of filename?
 	iid       string // XXX e.g. PID - where do we get it from?
 	content   string // One line
+	image     string
 	timestamp *google_protobuf.Timestamp
 }
 
 // List of log files we watch
 type loggerContext struct {
-	logfileReaders []logfileReader
+	logFileReader logfileReader
+	part		   string
 	image          string
 	logChan        chan<- logEntry
 }
@@ -81,7 +83,16 @@ type logfileReader struct {
 	size     int64 // To detect file truncation
 }
 
-var xenDomULoggerMap map[string]*loggerContext
+type senderContext struct {
+	pushTimer  time.Timer
+	logCounter   int
+	source	   string
+	image          string
+	logBundle *zmet.LogBundle
+}
+
+var loggerMap map[string]*loggerContext
+var senderMap map[string]*senderContext
 
 // Context for handleDNSModify
 type DNSContext struct {
@@ -112,6 +123,13 @@ func main() {
 	if *versionPtr {
 		fmt.Printf("%s: %s\n", os.Args[0], Version)
 		return
+	}
+
+	if loggerMap == nil {
+		loggerMap = make(map[string]*loggerContext)
+	}
+	if senderMap == nil {
+		senderMap = make(map[string]*senderContext)
 	}
 	// Note that LISP needs a separate directory since it moves
 	// old content to a subdir when it (re)starts
@@ -149,12 +167,11 @@ func main() {
 		currentPartition = zboot.GetCurrentPartition()
 	}
 	loggerChan := make(chan logEntry)
-	ctx := loggerContext{logChan: loggerChan, image: currentPartition}
-	xenCtx := loggerContext{logChan: loggerChan}
+
 	// Start sender of log events
 	// XXX or we run this in main routine and the logDirChanges loop
 	// in a go routine??
-	go processEvents(currentPartition, loggerChan)
+	go processEvents(loggerChan)
 
 	// The OtherPartition files will not change hence we can just
 	// read them and send their lines; no need to watch for changes.
@@ -163,7 +180,7 @@ func main() {
 			otherLogdirname)
 		otherLoggerChan := make(chan logEntry)
 		otherPartition := zboot.GetOtherPartition()
-		go processEvents(otherPartition, otherLoggerChan)
+		go processEvents(otherLoggerChan)
 		files, err := ioutil.ReadDir(otherLogdirname)
 		if err != nil {
 			log.Fatal(err)
@@ -177,7 +194,7 @@ func main() {
 			log.Printf("Read %s until EOF\n", filename)
 			name := strings.Split(filename, ".log")
 			source := name[0]
-			logReader(filename, source, otherLoggerChan)
+			logReader(filename, otherPartition, source, otherLoggerChan)
 		}
 		// make processEvents() exit for this channel
 		close(otherLoggerChan)
@@ -185,25 +202,30 @@ func main() {
 
 	logDirChanges := make(chan string)
 	go watch.WatchStatus(logDirName, logDirChanges)
+	logDirCtx := loggerContext{logChan:loggerChan, image:currentPartition}
+
 	lispLogDirChanges := make(chan string)
 	go watch.WatchStatus(lispLogDirName, lispLogDirChanges)
+	lispDirCtx := loggerContext{logChan:loggerChan, image:currentPartition}
+
 	xenLogDirChanges := make(chan string)
 	go watch.WatchStatus(xenLogDirname, xenLogDirChanges)
+	xenDirCtx := loggerContext{logChan:loggerChan}
 
 	log.Println("called watcher...")
 	for {
 		select {
 		case change := <-logDirChanges:
-			HandleLogDirEvent(change, logDirName, &ctx,
+			HandleLogDirEvent(change, logDirName, &logDirCtx,
 				handleLogDirModify, handleLogDirDelete)
 
 		case change := <-lispLogDirChanges:
-			HandleLogDirEvent(change, lispLogDirName, &ctx,
+			HandleLogDirEvent(change, lispLogDirName, &lispDirCtx,
 				handleLogDirModify, handleLogDirDelete)
 
 		case change := <-xenLogDirChanges:
-			HandleLogDirEvent(change, xenLogDirname, &xenCtx,
-				handleXenLogDirModify, handleXenLogDirDelete)
+			HandleLogDirEvent(change, xenLogDirname, &xenDirCtx,
+				handleLogDirModify, handleLogDirDelete)
 
 		case change := <-networkStatusChanges:
 			watch.HandleStatusEvent(change, &DNSctx,
@@ -246,42 +268,52 @@ func handleDNSDelete(ctxArg interface{}, statusFilename string) {
 }
 
 // This runs as a separate go routine sending out data
-func processEvents(image string, logChan <-chan logEntry) {
+func processEvents(logChan <-chan logEntry) {
 
-	reportLogs := new(zmet.LogBundle)
 	flushTimer := time.NewTicker(time.Second * 10)
-	counter := 0
 
 	for {
 		select {
 		case event, more := <-logChan:
 			if !more {
-				log.Printf("processEvents(%s) done\n", image)
-				if counter > 0 {
-					sendProtoStrForLogs(reportLogs, image,
-						iteration)
+				log.Printf("processEvents done\n")
+				for _, senderCtx := range senderMap {
+					if senderCtx.logCounter > 0 {
+						sendProtoStrForLogs(senderCtx.logBundle, senderCtx.image,
+							iteration)
+						senderCtx.logCounter = 0
+						iteration += 1
+					}
 				}
 				return
 			}
-			HandleLogEvent(event, reportLogs, counter)
-			counter++
+			senderCtx, ok := senderMap[event.image]
+			if !ok {
+				senderCtx = &senderContext{}
+				senderCtx.image = event.image
+				senderCtx.logBundle = new(zmet.LogBundle)
+				senderMap[event.image] = senderCtx
+			}
+			handleLogEvent(event, senderCtx.logBundle, senderCtx.logCounter)
+			senderCtx.logCounter++
 
-			if counter >= logMaxSize {
-				sendProtoStrForLogs(reportLogs, image,
+			if senderCtx.logCounter >= logMaxSize {
+				sendProtoStrForLogs(senderCtx.logBundle, senderCtx.image,
 					iteration)
-				counter = 0
+				senderCtx.logCounter = 0
 				iteration += 1
 			}
 
 		case <-flushTimer.C:
 			if debug {
-				log.Println("Logger Flush at",
-					reportLogs.Timestamp)
+				log.Println("Logger timeout ", ptypes.TimestampNow())
 			}
-			if counter > 0 {
-				sendProtoStrForLogs(reportLogs, image,
-					iteration)
-				counter = 0
+			for _, senderCtx := range senderMap {
+				if senderCtx.logCounter > 0 {
+					sendProtoStrForLogs(senderCtx.logBundle, senderCtx.image,
+						iteration)
+					senderCtx.logCounter = 0
+				}
 				iteration += 1
 			}
 		}
@@ -291,13 +323,13 @@ func processEvents(image string, logChan <-chan logEntry) {
 var msgIdCounter = 1
 var iteration = 0
 
-func HandleLogEvent(event logEntry, reportLogs *zmet.LogBundle, counter int) {
+func handleLogEvent(event logEntry, reportLogs *zmet.LogBundle, counter int) {
 	// Assign a unique msgId for each message
 	msgId := msgIdCounter
 	msgIdCounter += 1
 	if debug {
-		fmt.Printf("Read event from %s time %v id %d: %s\n",
-			event.source, event.timestamp, msgId, event.content)
+		fmt.Printf("Read event from %s time %v id %d: %s,%s\n",
+			event.source, event.timestamp, msgId, event.content, event.image)
 	}
 	logDetails := &zmet.LogEntry{}
 	logDetails.Content = event.content
@@ -311,6 +343,9 @@ func HandleLogEvent(event logEntry, reportLogs *zmet.LogBundle, counter int) {
 func sendProtoStrForLogs(reportLogs *zmet.LogBundle, image string,
 	iteration int) {
 	reportLogs.Timestamp = ptypes.TimestampNow()
+	if debug {
+		log.Println("Logger Flush at ", reportLogs.Timestamp)
+	}
 	reportLogs.DevID = *proto.String(devUUID.String())
 	reportLogs.Image = image
 	if debug {
@@ -400,56 +435,31 @@ func HandleLogDirEvent(change string, logDirName string, ctx *loggerContext,
 }
 
 // If the filename is new we spawn a go routine which will read
-func handleXenLogDirModify(ctx *loggerContext, filename string, source string) {
-
-	if xenDomULoggerMap == nil {
-		xenDomULoggerMap = make(map[string]*loggerContext)
-	}
-
-	log.Printf("handleLogDirModify: add %s, source %s\n", filename, source)
-
-	domUCtx, ok := xenDomULoggerMap[filename]
-	if ok {
-		readLineToEvent(&domUCtx.logfileReaders[0], ctx.logChan)
-		return
-	}
-
-	domUCtx = &loggerContext{}
-	domUCtx.image = source //XXX FIXME Fill actual content for image
-	domUCtx.logChan = ctx.logChan
-
-	xenDomULoggerMap[filename] = domUCtx
-
-	fileDesc, err := os.Open(filename)
-	if err != nil {
-		log.Printf("Log file ignored due to %s\n", err)
-		return
-	}
-	// Start reading from the file with a reader.
-	reader := bufio.NewReader(fileDesc)
-	if reader == nil {
-		log.Printf("Log file ignored due to %s\n", err)
-		return
-	}
-	r := logfileReader{filename: filename,
-		source:   source,
-		fileDesc: fileDesc,
-		reader:   reader,
-	}
-	// read initial entries until EOF
-	readLineToEvent(&r, domUCtx.logChan)
-	domUCtx.logfileReaders = append(domUCtx.logfileReaders, r)
-}
-
-// If the filename is new we spawn a go routine which will read
 func handleLogDirModify(ctx *loggerContext, filename string, source string) {
-	for i, r := range ctx.logfileReaders {
-		if r.filename == filename {
-			readLineToEvent(&ctx.logfileReaders[i], ctx.logChan)
-			return
-		}
+
+	if loggerMap == nil {
+		loggerMap = make(map[string]*loggerContext)
 	}
+
 	log.Printf("handleLogDirModify: add %s, source %s\n", filename, source)
+
+	logCtx, ok := loggerMap[filename]
+	if ok {
+		readLineToEvent(&logCtx.logFileReader, logCtx.image, logCtx.logChan)
+		return
+	}
+
+	logCtx = &loggerContext{}
+
+	if ctx.image == "" {
+		logCtx.image = source
+	} else {
+		logCtx.image = ctx.image
+	}
+	logCtx.logChan = ctx.logChan
+
+	loggerMap[filename] = logCtx
+
 	fileDesc, err := os.Open(filename)
 	if err != nil {
 		log.Printf("Log file ignored due to %s\n", err)
@@ -466,26 +476,22 @@ func handleLogDirModify(ctx *loggerContext, filename string, source string) {
 		fileDesc: fileDesc,
 		reader:   reader,
 	}
+	logCtx.logFileReader = r
 	// read initial entries until EOF
-	readLineToEvent(&r, ctx.logChan)
-	ctx.logfileReaders = append(ctx.logfileReaders, r)
+	readLineToEvent(&logCtx.logFileReader, logCtx.image, logCtx.logChan)
 }
 
-// XXX TBD should we stop the go routine?
+
 func handleLogDirDelete(ctx *loggerContext, filename string, source string) {
-}
 
-// XXX TBD should we stop the go routine?
-func handleXenLogDirDelete(ctx *loggerContext, filename string, source string) {
-
-	log.Printf("handleXenLogDirDelete: delete %s, source %s\n", filename, source)
-	if xenDomULoggerMap[filename] != nil {
-		delete(xenDomULoggerMap,filename)
+	log.Printf("handleLogDirDelete: delete %s, source %s\n", filename, source)
+	if loggerMap[filename] != nil {
+		delete(loggerMap,filename)
 	}
 }
 
 // Read until EOF or error
-func readLineToEvent(r *logfileReader, logChan chan<- logEntry) {
+func readLineToEvent(r *logfileReader, image string, logChan chan<- logEntry) {
 	// Check if shrunk aka truncated
 	fi, err := r.fileDesc.Stat()
 	if err != nil {
@@ -519,10 +525,10 @@ func readLineToEvent(r *logfileReader, logChan chan<- logEntry) {
 		parsedDateAndTime, err := parseDateTime(line)
 		// XXX set iid to PID?
 		if err != nil {
-			logChan <- logEntry{source: r.source, content: line}
+			logChan <- logEntry{source: r.source, content: line, image:image}
 		} else {
 			logChan <- logEntry{source: r.source, content: line,
-				timestamp: parsedDateAndTime}
+				image:image, timestamp: parsedDateAndTime}
 		}
 
 	}
@@ -572,7 +578,7 @@ func parseDateTime(line string) (*google_protobuf.Timestamp, error) {
 
 // Read unchanging files until EOF
 // Used for the otherpartition files!
-func logReader(logFile string, source string, logChan chan<- logEntry) {
+func logReader(logFile, image, source string, logChan chan<- logEntry) {
 	fileDesc, err := os.Open(logFile)
 	if err != nil {
 		log.Printf("Log file ignored due to %s\n", err)
@@ -590,6 +596,6 @@ func logReader(logFile string, source string, logChan chan<- logEntry) {
 		reader:   reader,
 	}
 	// read entries until EOF
-	readLineToEvent(&r, logChan)
+	readLineToEvent(&r, image, logChan)
 	log.Printf("logReader done for %s\n", logFile)
 }
