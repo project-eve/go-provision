@@ -70,9 +70,9 @@ type logEntry struct {
 // List of log files we watch
 type loggerContext struct {
 	logFileReader logfileReader
-	part		   string
-	image          string
-	logChan        chan<- logEntry
+	part          string
+	image         string
+	logChan       chan<- logEntry
 }
 
 type logfileReader struct {
@@ -85,10 +85,10 @@ type logfileReader struct {
 
 type senderContext struct {
 	pushTimer  time.Timer
-	logCounter   int
-	source	   string
-	image          string
-	logBundle *zmet.LogBundle
+	logCounter int
+	source     string
+	image      string
+	logBundle  *zmet.LogBundle
 }
 
 var loggerMap map[string]*loggerContext
@@ -202,15 +202,15 @@ func main() {
 
 	logDirChanges := make(chan string)
 	go watch.WatchStatus(logDirName, logDirChanges)
-	logDirCtx := loggerContext{logChan:loggerChan, image:currentPartition}
+	logDirCtx := loggerContext{logChan: loggerChan, image: currentPartition}
 
 	lispLogDirChanges := make(chan string)
 	go watch.WatchStatus(lispLogDirName, lispLogDirChanges)
-	lispDirCtx := loggerContext{logChan:loggerChan, image:currentPartition}
+	lispDirCtx := loggerContext{logChan: loggerChan, image: currentPartition}
 
 	xenLogDirChanges := make(chan string)
 	go watch.WatchStatus(xenLogDirname, xenLogDirChanges)
-	xenDirCtx := loggerContext{logChan:loggerChan}
+	xenDirCtx := loggerContext{logChan: loggerChan}
 
 	log.Println("called watcher...")
 	for {
@@ -481,12 +481,11 @@ func handleLogDirModify(ctx *loggerContext, filename string, source string) {
 	readLineToEvent(&logCtx.logFileReader, logCtx.image, logCtx.logChan)
 }
 
-
 func handleLogDirDelete(ctx *loggerContext, filename string, source string) {
 
 	log.Printf("handleLogDirDelete: delete %s, source %s\n", filename, source)
 	if loggerMap[filename] != nil {
-		delete(loggerMap,filename)
+		delete(loggerMap, filename)
 	}
 }
 
@@ -525,10 +524,10 @@ func readLineToEvent(r *logfileReader, image string, logChan chan<- logEntry) {
 		parsedDateAndTime, err := parseDateTime(line)
 		// XXX set iid to PID?
 		if err != nil {
-			logChan <- logEntry{source: r.source, content: line, image:image}
+			logChan <- logEntry{source: r.source, content: line, image: image}
 		} else {
 			logChan <- logEntry{source: r.source, content: line,
-				image:image, timestamp: parsedDateAndTime}
+				image: image, timestamp: parsedDateAndTime}
 		}
 
 	}
