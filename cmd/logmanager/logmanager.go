@@ -477,6 +477,11 @@ func handleLogDirDelete(ctx *loggerContext, filename string, source string) {
 
 // XXX TBD should we stop the go routine?
 func handleXenLogDirDelete(ctx *loggerContext, filename string, source string) {
+
+	log.Printf("handleXenLogDirDelete: delete %s, source %s\n", filename, source)
+	if xenDomULoggerMap[filename] != nil {
+		delete(xenDomULoggerMap,filename)
+	}
 }
 
 // Read until EOF or error
