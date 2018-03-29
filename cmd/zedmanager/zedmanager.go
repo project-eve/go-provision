@@ -90,6 +90,7 @@ func main() {
 	watch.CleanupRestart("identitymgr")
 	watch.CleanupRestart("zedrouter")
 	watch.CleanupRestart("domainmgr")
+	watch.CleanupRestart("baseosmgr")
 	watch.CleanupRestart("zedagent")
 
 	verifierStatusDirname := "/var/run/verifier/status"
@@ -100,7 +101,7 @@ func main() {
 
 	downloaderAppImgObjStatusDirname := "/var/run/downloader/" + appImgObj + "/status"
 	verifierAppImgObjStatusDirname := "/var/run/verifier/" + appImgObj + "/status"
-	zedagentCertObjStatusDirname := "/var/run/zedagent/" + certObj + "/status"
+	baseOsMgrCertObjStatusDirname := "/var/run/baseosmgr/" + certObj + "/status"
 
 	dirs := []string{
 		zedmanagerConfigDirname,
@@ -119,7 +120,7 @@ func main() {
 		downloaderStatusDirname,
 		verifierAppImgObjStatusDirname,
 		verifierStatusDirname,
-		zedagentCertObjStatusDirname,
+		baseOsMgrCertObjStatusDirname,
 	}
 
 	for _, dir := range dirs {
@@ -151,9 +152,9 @@ func main() {
 		zedmanagerStatusDirname, configChanges)
 	networkStatusChanges := make(chan string)
 	go watch.WatchStatus(DNSDirname, networkStatusChanges)
-	zedagentCertObjStatusChanges := make(chan string)
-	go watch.WatchStatus(zedagentCertObjStatusDirname,
-		zedagentCertObjStatusChanges)
+	baseOsMgrCertObjStatusChanges := make(chan string)
+	go watch.WatchStatus(baseOsMgrCertObjStatusDirname,
+		baseOsMgrCertObjStatusChanges)
 
 	var configRestartFn watch.ConfigRestartHandler = handleConfigRestart
 	var verifierRestartedFn watch.StatusRestartHandler = handleVerifierRestarted
@@ -187,10 +188,10 @@ func main() {
 	for {
 		select {
 		// handle cert ObjectsChanges
-		case change := <-zedagentCertObjStatusChanges:
+		case change := <-baseOsMgrCertObjStatusChanges:
 			{
 				watch.HandleStatusEvent(change, &ctx,
-					zedagentCertObjStatusDirname,
+					baseOsMgrCertObjStatusDirname,
 					&types.CertObjStatus{},
 					handleCertObjStatusModify,
 					handleCertObjStatusDelete, nil)
