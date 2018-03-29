@@ -55,11 +55,11 @@ type configItems struct {
 }
 
 // Really a constant
-// We do a GET of config every 60 seconds,
+// We do a GET of config every 10 seconds,
 // PUT of metrics every 60 seconds,
 // if we don't hear anything from the cloud in a week, then we reboot,
 // and during a post-upgrade boot that time is reduced to 10 minutes.
-var configItemDefaults = configItems{configInterval: 60, metricInterval: 60,
+var configItemDefaults = configItems{configInterval: 10, metricInterval: 60,
 	resetIfCloudGoneTime: 7 * 24 * 3600, fallbackIfCloudGoneTime: 600}
 
 // XXX	resetIfCloudGoneTime: 300, fallbackIfCloudGoneTime: 60}
@@ -119,6 +119,7 @@ func handleConfigInit() {
 }
 
 // Run a periodic fetch of the config
+
 func configTimerTask(handleChannel chan interface{},
 	getconfigCtx *getconfigContext) {
 	configUrl := serverName + "/" + configApi
@@ -141,8 +142,6 @@ func configTimerTask(handleChannel chan interface{},
 		if rebootFlag == false {
 			rebootFlag = getLatestConfig(configUrl, iteration,
 				&upgradeInprogress, getconfigCtx)
-		} else {
-			log.Printf("rebootFlag set; not getting config\n")
 		}
 	}
 }
@@ -179,7 +178,7 @@ func getLatestConfig(url string, iteration int, upgradeInprogress *bool,
 	if timePassed > resetLimit {
 		log.Printf("Exceeded outage for cloud connectivity by %d seconds- rebooting\n",
 			(timePassed-resetLimit)/time.Second)
-		execReboot(true)
+		zboot.ExecReboot(true)
 		return true
 	}
 	if *upgradeInprogress {
@@ -187,7 +186,7 @@ func getLatestConfig(url string, iteration int, upgradeInprogress *bool,
 		if timePassed > fallbackLimit {
 			log.Printf("Exceeded fallback outage for cloud connectivity by %d seconds- rebooting\n",
 				(timePassed-fallbackLimit)/time.Second)
-			execReboot(true)
+			zboot.ExecReboot(true)
 			return true
 		}
 	}
@@ -351,7 +350,7 @@ func inhaleDeviceConfig(config *zconfig.EdgeDevConfig, getconfigCtx *getconfigCo
 		<-newConfigTimer.C
 	}
 
-	// add new BaseOS/App instances; returns rebootFlag
+	// add new BaseOS/App instances
 	if parseConfig(config, getconfigCtx) {
 		return true
 	}
@@ -405,7 +404,7 @@ func checkCurrentAppFiles(config *zconfig.EdgeDevConfig) bool {
 					log.Println("Old config: ", err)
 				}
 				// also remove the certificates config holder file
-				os.Remove(zedagentCertObjConfigDirname + "/" + curAppFilename)
+				os.Remove(baseOsMgrCertConfigDirname + "/" + curAppFilename)
 				deleted = true
 			}
 		}
@@ -417,9 +416,9 @@ func checkCurrentBaseOsFiles(config *zconfig.EdgeDevConfig) bool {
 
 	deleted := false
 	// get the current set of baseOs files
-	curBaseOsFilenames, err := ioutil.ReadDir(zedagentBaseOsConfigDirname)
+	curBaseOsFilenames, err := ioutil.ReadDir(baseOsMgrBaseOsConfigDirname)
 	if err != nil {
-		log.Printf("%v for %s\n", err, zedagentBaseOsConfigDirname)
+		log.Printf("%v for %s\n", err, baseOsMgrBaseOsConfigDirname)
 		curBaseOsFilenames = nil
 	}
 
@@ -454,8 +453,8 @@ func removeBaseOsEntry(baseOsFilename string) {
 	log.Printf("removeBaseOsEntry %s, remove baseOs entry\n", uuidStr)
 
 	// remove base os holder config file
-	os.Remove(zedagentBaseOsConfigDirname + "/" + baseOsFilename)
+	os.Remove(baseOsMgrBaseOsConfigDirname + "/" + baseOsFilename)
 
 	// remove certificates holder config file
-	os.Remove(zedagentCertObjConfigDirname + "/" + baseOsFilename)
+	os.Remove(baseOsMgrCertConfigDirname + "/" + baseOsFilename)
 }

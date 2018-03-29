@@ -13,10 +13,8 @@ import (
 	"log"
 	"net"
 	"os"
-	"os/exec"
 	"reflect"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -39,10 +37,9 @@ func parseConfig(config *zconfig.EdgeDevConfig, getconfigCtx *getconfigContext) 
 		return true
 	}
 
-	// updating/rebooting, ignore config??
+	// updating/rebooting, ignore config
 	// XXX can we get stuck here?
 	if zboot.IsAvailable() && zboot.IsOtherPartitionStateUpdating() {
-		log.Println("OtherPartitionStatusUpdating - returning rebootFlag")
 		return true
 	}
 
@@ -375,7 +372,6 @@ func parseStorageConfigList(config *zconfig.EdgeDevConfig, objType string,
 		image.Devtype = strings.ToLower(drive.Drvtype.String())
 		image.ImageSignature = drive.Image.Siginfo.Signature
 		image.ImageSha256 = drive.Image.Sha256
-		image.ImageSha256 = drive.Image.Sha256
 
 		// copy the certificates
 		if drive.Image.Siginfo.Signercerturl != "" {
@@ -674,7 +670,7 @@ func writeAppInstanceConfig(appInstance types.AppInstanceConfig,
 
 func writeBaseOsConfig(baseOsConfig *types.BaseOsConfig, uuidStr string) {
 
-	configFilename := zedagentBaseOsConfigDirname + "/" + uuidStr + ".json"
+	configFilename := baseOsMgrBaseOsConfigDirname + "/" + uuidStr + ".json"
 	bytes, err := json.Marshal(baseOsConfig)
 
 	if err != nil {
@@ -688,23 +684,6 @@ func writeBaseOsConfig(baseOsConfig *types.BaseOsConfig, uuidStr string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-}
-
-func writeBaseOsStatus(baseOsStatus *types.BaseOsStatus, uuidStr string) {
-
-	statusFilename := zedagentBaseOsStatusDirname + "/" + uuidStr + ".json"
-	bytes, err := json.Marshal(baseOsStatus)
-	if err != nil {
-		log.Fatal(err, "json Marshal BaseOsStatus")
-	}
-
-	err = ioutil.WriteFile(statusFilename, bytes, 0644)
-	if err != nil {
-		log.Fatal(err)
-	}
-	// XXX For now we might trigger more often than needed
-	// XXX should check whether the status changed
-	PublishDeviceInfoToZedCloud(baseOsStatusMap, devCtx.assignableAdapters)
 }
 
 func getCertObjects(uuidAndVersion types.UUIDandVersion,
@@ -856,7 +835,7 @@ func createBaseOsConfig(baseOsList []*types.BaseOsConfig, certList []*types.Cert
 			continue
 		}
 		uuidStr := baseOs.UUIDandVersion.UUID.String()
-		configFilename := zedagentBaseOsConfigDirname + "/" + uuidStr + ".json"
+		configFilename := baseOsMgrBaseOsConfigDirname + "/" + uuidStr + ".json"
 		// file not present
 		if _, err := os.Stat(configFilename); err != nil {
 			writeBaseOsConfig(baseOs, uuidStr)
@@ -893,7 +872,7 @@ func validateAppInstanceConfig(appInstance types.AppInstanceConfig) bool {
 
 func writeCertObjConfig(config *types.CertObjConfig, uuidStr string) {
 
-	configFilename := zedagentCertObjConfigDirname + "/" + uuidStr + ".json"
+	configFilename := baseOsMgrCertConfigDirname + "/" + uuidStr + ".json"
 
 	bytes, err := json.Marshal(config)
 	if err != nil {
@@ -908,14 +887,12 @@ func writeCertObjConfig(config *types.CertObjConfig, uuidStr string) {
 	}
 }
 
-// Returns a rebootFlag
 func parseOpCmds(config *zconfig.EdgeDevConfig) bool {
 
 	scheduleBackup(config.GetBackup())
 	return scheduleReboot(config.GetReboot())
 }
 
-// Returns a rebootFlag
 func scheduleReboot(reboot *zconfig.DeviceOpsCmd) bool {
 
 	if reboot == nil {
@@ -1011,7 +988,7 @@ func handleReboot() {
 		state = rebootConfig.DesiredState
 	}
 
-	execReboot(state)
+	zboot.ExecReboot(state)
 }
 
 func startExecReboot() {
@@ -1035,35 +1012,5 @@ func handleExecReboot() {
 
 	<-rebootTimer.C
 
-	execReboot(true)
-}
-
-func execReboot(state bool) {
-
-	// XXX:FIXME perform graceful service stop/ state backup
-
-	// do a sync
-	log.Printf("Doing a sync..\n")
-	syscall.Sync()
-
-	switch state {
-
-	case true:
-		log.Printf("Rebooting...\n")
-		duration := time.Duration(immediate)
-		timer := time.NewTimer(time.Second * duration)
-		<-timer.C
-		zboot.Reset()
-
-	case false:
-		log.Printf("Powering Off..\n")
-		duration := time.Duration(immediate)
-		timer := time.NewTimer(time.Second * duration)
-		<-timer.C
-		poweroffCmd := exec.Command("poweroff")
-		_, err := poweroffCmd.Output()
-		if err != nil {
-			log.Println(err)
-		}
-	}
+	zboot.ExecReboot(true)
 }

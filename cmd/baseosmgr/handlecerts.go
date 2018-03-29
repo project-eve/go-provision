@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-// zedagent punlishes these config/status files
+// zedagent publishes these config/status files
 var certObjConfigMap map[string]types.CertObjConfig
 var certObjStatusMap map[string]types.CertObjStatus
 
@@ -286,7 +286,7 @@ func removeCertObjStatus(uuidStr string) {
 		// Delete the status file also
 		if ok := certObjStatusDelete(uuidStr); ok {
 			statusFilename := fmt.Sprintf("%s/%s.json",
-				zedagentCertObjStatusDirname, uuidStr)
+				baseOsMgrCertStatusDirname, uuidStr)
 			if err := os.Remove(statusFilename); err != nil {
 				log.Println(err)
 			}
@@ -317,12 +317,12 @@ func doCertObjUninstall(uuidStr string, status *types.CertObjStatus) (bool, bool
 		log.Printf("%s, certEntry safename %s\n", uuidStr, safename)
 		// Decrease refcount if we had increased it
 		if ss.HasDownloaderRef {
-			removeCertObjDownloaderConfig(safename)
+			removeDownloaderConfig(certObj, safename)
 			ss.HasDownloaderRef = false
 			changed = true
 		}
 
-		_, err := lookupCertObjDownloaderStatus(safename)
+		_, err := lookupDownloaderStatus(certObj, safename)
 		// XXX if additional refs it will not go away
 		if false && err == nil {
 			log.Printf("%s, download %s not yet gone\n", uuidStr, safename)
@@ -345,7 +345,7 @@ func doCertObjUninstall(uuidStr string, status *types.CertObjStatus) (bool, bool
 }
 
 func writeCertObjStatus(status *types.CertObjStatus, uuidStr string) {
-	statusFilename := zedagentCertObjStatusDirname + "/" + uuidStr + ".json"
+	statusFilename := baseOsMgrCertStatusDirname + "/" + uuidStr + ".json"
 	bytes, err := json.Marshal(status)
 	if err != nil {
 		log.Fatal(err, "json Marshal certObjStatus")

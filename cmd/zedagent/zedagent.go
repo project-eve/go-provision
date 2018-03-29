@@ -5,31 +5,9 @@
 //   * config sync
 //   * metric/info pubish
 // app instance config is pushed to zedmanager for orchestration
+// baseos instance config is pushed to baseosmgr for orchestration
 // event based app instance/device info published to ZedCloud
 // periodic status/metric published to zedCloud
-// zeagent orchestrates base os/certs installation
-
-// zedagent handles the following orchestration
-//   * base os config/status          <zedagent>   / <baseos> / <config | status>
-//   * certs config/status            <zedagent>   / certs>   / <config | status>
-//   * base os download config/status <downloader> / <baseos> / <config | status>
-//   * certs download config/status   <downloader> / <certs>  / <config | status>
-//   * base os verifier config/status <verifier>   / <baseos> / <config | status>
-// <base os>
-//   <zedagent>   <baseos> <config> --> <zedagent>    <baseos> <status>
-//				<download>...       --> <downloader>  <baseos> <config>
-//   <downloader> <baseos> <config> --> <downloader>  <baseos> <status>
-//				<downloaded>...     --> <downloader>  <baseos> <status>
-//								    --> <zedagent>    <baseos> <status>
-//								    --> <verifier>    <baseos> <config>
-//				<verified>  ...     --> <verifier>    <baseos> <status>
-//								    --> <zedagent>    <baseos> <status>
-// <certs>
-//   <zedagent>   <certs> <config> --> <zedagent>    <certs> <status>
-//				<download>...      --> <downloader>  <certs> <config>
-//   <downloader> <certs> <config> --> <downloader>  <certs> <status>
-//				<downloaded>...    --> <downloader>  <certs> <status>
-//								   --> <zedagent>    <certs> <status>
 
 package main
 
@@ -59,47 +37,34 @@ const (
 	verifierModulename   = "verifier"
 	zedagentModulename   = agentName
 	zedmanagerModulename = "zedmanager"
+	baseOsMgrModulename  = "baseosmgr"
 
-	moduleName     = agentName
 	zedBaseDirname = "/var/tmp"
 	zedRunDirname  = "/var/run"
-	baseDirname    = zedBaseDirname + "/" + moduleName
-	runDirname     = zedRunDirname + "/" + moduleName
+	baseDirname    = zedBaseDirname + "/" + agentName
+	runDirname     = zedRunDirname + "/" + agentName
 
-	configDir             = "/config"
-	persistDir            = "/persist"
-	objectDownloadDirname = persistDir + "/downloads"
-	certificateDirname    = persistDir + "/certs"
-
-	downloaderBaseDirname = zedBaseDirname + "/" + downloaderModulename
-	downloaderRunDirname  = zedRunDirname + "/" + downloaderModulename
-
-	verifierBaseDirname = zedBaseDirname + "/" + verifierModulename
-	verifierRunDirname  = zedRunDirname + "/" + verifierModulename
+	configDir          = "/config"
+	persistDir         = "/persist"
+	certificateDirname = persistDir + "/certs"
 
 	zedagentConfigDirname = baseDirname + "/config"
 	zedagentStatusDirname = runDirname + "/status"
 
+	// app instance config/status holder
 	zedmanagerConfigDirname = zedBaseDirname + "/" + zedmanagerModulename + "/config"
 	zedmanagerStatusDirname = zedRunDirname + "/" + zedmanagerModulename + "/status"
 
 	// base os config/status holder
-	zedagentBaseOsConfigDirname = baseDirname + "/" + baseOsObj + "/config"
-	zedagentBaseOsStatusDirname = runDirname + "/" + baseOsObj + "/status"
+	baseOsMgrBaseOsConfigDirname = zedBaseDirname + "/" + baseOsMgrModulename + "/" + baseOsObj + "/config"
+	baseOsMgrBaseOsStatusDirname = zedRunDirname + "/" + baseOsMgrModulename + "/" + baseOsObj + "/status"
 
 	// certificate config/status holder
-	zedagentCertObjConfigDirname = baseDirname + "/" + certObj + "/config"
-	zedagentCertObjStatusDirname = runDirname + "/" + certObj + "/status"
+	baseOsMgrCertConfigDirname = zedBaseDirname + "/" + baseOsMgrModulename + "/" + certObj + "/config"
+	baseOsMgrCertStatusDirname = zedRunDirname + "/" + baseOsMgrModulename + "/" + certObj + "/status"
 
-	// base os download config/status holder
-	downloaderBaseOsStatusDirname  = downloaderRunDirname + "/" + baseOsObj + "/status"
-	downloaderCertObjStatusDirname = downloaderRunDirname + "/" + certObj + "/status"
-
-	// base os verifier status holder
-	verifierBaseOsConfigDirname = verifierBaseDirname + "/" + baseOsObj + "/config"
-	verifierBaseOsStatusDirname = verifierRunDirname + "/" + baseOsObj + "/status"
-	DNSDirname                  = "/var/run/zedrouter/DeviceNetworkStatus"
-	domainStatusDirname         = "/var/run/domainmgr/status"
+	DNSDirname          = "/var/run/zedrouter/DeviceNetworkStatus"
+	domainStatusDirname = "/var/run/domainmgr/status"
 )
 
 // Set from Makefile
@@ -156,7 +121,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Printf("Starting %s\n, agentName")
+	log.Printf("Starting %s\n", agentName)
 	watch.CleanupRestarted(agentName)
 
 	// Tell ourselves to go ahead
@@ -168,17 +133,7 @@ func main() {
 
 	restartChanges := make(chan string)
 	appInstanceStatusChanges := make(chan string)
-	baseOsConfigStatusChanges := make(chan string)
-	baseOsDownloaderChanges := make(chan string)
-	baseOsVerifierChanges := make(chan string)
-	certObjConfigStatusChanges := make(chan string)
-	certObjDownloaderChanges := make(chan string)
-
-	var verifierRestartedFn watch.StatusRestartHandler = handleVerifierRestarted
-
-	// baseOs verification status watcher
-	go watch.WatchStatus(verifierBaseOsStatusDirname,
-		baseOsVerifierChanges)
+	baseOsInstanceStatusChanges := make(chan string)
 
 	// Pick up (mostly static) AssignableAdapters before we report
 	// any device info
@@ -187,29 +142,12 @@ func main() {
 	aa := types.AssignableAdapters{}
 	aaChanges, aaFunc, aaCtx := adapters.Init(&aa, model)
 
-	verifierCtx := verifierContext{}
 	devCtx = deviceContext{assignableAdapters: &aa}
 	domainCtx := domainContext{}
 
-	// First we process the verifierStatus to avoid downloading
-	// an base image we already have in place
-	log.Printf("Handling initial verifier Status\n")
-	for !verifierCtx.verifierRestarted {
-		select {
-		case change := <-baseOsVerifierChanges:
-			watch.HandleStatusEvent(change, &verifierCtx,
-				verifierBaseOsStatusDirname,
-				&types.VerifyImageStatus{},
-				handleBaseOsVerifierStatusModify,
-				handleBaseOsVerifierStatusDelete,
-				&verifierRestartedFn)
-			if verifierCtx.verifierRestarted {
-				log.Printf("Verifier reported restarted\n")
-				break
-			}
-		case change := <-aaChanges:
-			aaFunc(&aaCtx, change)
-		}
+	select {
+	case change := <-aaChanges:
+		aaFunc(&aaCtx, change)
 	}
 
 	DNSctx := DNSContext{}
@@ -249,11 +187,11 @@ func main() {
 			aaFunc(&aaCtx, change)
 		case <-t1.C:
 			log.Printf("Exceeded outage for cloud connectivity - rebooting\n")
-			execReboot(true)
+			zboot.ExecReboot(true)
 		case <-t2.C:
 			if upgradeInprogress {
 				log.Printf("Exceeded fallback outage for cloud connectivity - rebooting\n")
-				execReboot(true)
+				zboot.ExecReboot(true)
 			}
 		}
 	}
@@ -283,29 +221,19 @@ func main() {
 	getconfigCtx.metricsTickerHandle = metricsTickerHandle
 
 	// app instance status event watcher
-	go watch.WatchStatus(zedmanagerStatusDirname, appInstanceStatusChanges)
+	go watch.WatchStatus(zedmanagerStatusDirname,
+		appInstanceStatusChanges)
 
-	// base os config/status event handler
-	go watch.WatchConfigStatus(zedagentBaseOsConfigDirname,
-		zedagentBaseOsStatusDirname, baseOsConfigStatusChanges)
-
-	// cert object config/status event handler
-	go watch.WatchConfigStatus(zedagentCertObjConfigDirname,
-		zedagentCertObjStatusDirname, certObjConfigStatusChanges)
-
-	// baseOs download status watcher
-	go watch.WatchStatus(downloaderBaseOsStatusDirname,
-		baseOsDownloaderChanges)
-
-	// certificate download status watcher
-	go watch.WatchStatus(downloaderCertObjStatusDirname,
-		certObjDownloaderChanges)
+	// base os instance status event watcher
+	go watch.WatchStatus(baseOsMgrBaseOsStatusDirname,
+		baseOsInstanceStatusChanges)
 
 	// for restart flag handling
 	go watch.WatchStatus(zedagentStatusDirname, restartChanges)
 
 	domainStatusChanges := make(chan string)
 	go watch.WatchStatus(domainStatusDirname, domainStatusChanges)
+
 	for {
 		select {
 
@@ -317,16 +245,6 @@ func main() {
 				handleAppInstanceStatusModify,
 				handleAppInstanceStatusDelete, &restartFn)
 
-		case change := <-certObjConfigStatusChanges:
-			watch.HandleConfigStatusEvent(change, dummyContext{},
-				zedagentCertObjConfigDirname,
-				zedagentCertObjStatusDirname,
-				&types.CertObjConfig{},
-				&types.CertObjStatus{},
-				handleCertObjCreate,
-				handleCertObjModify,
-				handleCertObjDelete, nil)
-
 		case change := <-appInstanceStatusChanges:
 			watch.HandleStatusEvent(change, &devCtx,
 				zedmanagerStatusDirname,
@@ -334,36 +252,12 @@ func main() {
 				handleAppInstanceStatusModify,
 				handleAppInstanceStatusDelete, nil)
 
-		case change := <-baseOsConfigStatusChanges:
-			watch.HandleConfigStatusEvent(change, &devCtx,
-				zedagentBaseOsConfigDirname,
-				zedagentBaseOsStatusDirname,
-				&types.BaseOsConfig{},
+		case change := <-baseOsInstanceStatusChanges:
+			watch.HandleStatusEvent(change, &devCtx,
+				baseOsMgrBaseOsStatusDirname,
 				&types.BaseOsStatus{},
-				handleBaseOsCreate,
 				handleBaseOsModify,
 				handleBaseOsDelete, nil)
-
-		case change := <-baseOsDownloaderChanges:
-			watch.HandleStatusEvent(change, dummyContext{},
-				downloaderBaseOsStatusDirname,
-				&types.DownloaderStatus{},
-				handleBaseOsDownloadStatusModify,
-				handleBaseOsDownloadStatusDelete, nil)
-
-		case change := <-baseOsVerifierChanges:
-			watch.HandleStatusEvent(change, dummyContext{},
-				verifierBaseOsStatusDirname,
-				&types.VerifyImageStatus{},
-				handleBaseOsVerifierStatusModify,
-				handleBaseOsVerifierStatusDelete, nil)
-
-		case change := <-certObjDownloaderChanges:
-			watch.HandleStatusEvent(change, dummyContext{},
-				downloaderCertObjStatusDirname,
-				&types.DownloaderStatus{},
-				handleCertObjDownloadStatusModify,
-				handleCertObjDownloadStatusDelete, nil)
 
 		case change := <-networkStatusChanges:
 			watch.HandleStatusEvent(change, &DNSctx,
@@ -412,45 +306,25 @@ func handleRestart(ctxArg interface{}, done bool) {
 	}
 }
 
-func handleVerifierRestarted(ctxArg interface{}, done bool) {
-	ctx := ctxArg.(*verifierContext)
-	log.Printf("handleVerifierRestarted(%v)\n", done)
-	if done {
-		ctx.verifierRestarted = true
-	}
-}
-
 func handleInit() {
 	initializeDirs()
-	initMaps()
+	initBaseOsMaps()
 	handleConfigInit()
 }
 
 func initializeDirs() {
 
 	noObjTypes := []string{}
-	zedagentObjTypes := []string{baseOsObj, certObj}
-	zedagentVerifierObjTypes := []string{baseOsObj}
+	baseOsMgrObjTypes := []string{baseOsObj, certObj}
 
 	// create the module object based config/status dirs
-	createConfigStatusDirs(downloaderModulename, zedagentObjTypes)
-	createConfigStatusDirs(zedagentModulename, zedagentObjTypes)
+	createConfigStatusDirs(baseOsMgrModulename, baseOsMgrObjTypes)
 	createConfigStatusDirs(zedmanagerModulename, noObjTypes)
-	createConfigStatusDirs(verifierModulename, zedagentVerifierObjTypes)
+	createConfigStatusDirs(zedagentModulename, noObjTypes)
 
 	// create persistent holder directory
 	if _, err := os.Stat(persistDir); err != nil {
 		if err := os.MkdirAll(persistDir, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-	if _, err := os.Stat(certificateDirname); err != nil {
-		if err := os.MkdirAll(certificateDirname, 0700); err != nil {
-			log.Fatal(err)
-		}
-	}
-	if _, err := os.Stat(objectDownloadDirname); err != nil {
-		if err := os.MkdirAll(objectDownloadDirname, 0700); err != nil {
 			log.Fatal(err)
 		}
 	}
@@ -547,147 +421,23 @@ func handleDNSDelete(ctxArg interface{}, statusFilename string) {
 	log.Printf("handleDNSDelete done for %s\n", statusFilename)
 }
 
-// base os config/status event handlers
-// base os config create event
-func handleBaseOsCreate(ctxArg interface{}, statusFilename string,
-	configArg interface{}) {
-	config := configArg.(*types.BaseOsConfig)
-	ctx := ctxArg.(*deviceContext)
-	uuidStr := config.UUIDandVersion.UUID.String()
-
-	log.Printf("handleBaseOsCreate for %s\n", uuidStr)
-	addOrUpdateBaseOsConfig(uuidStr, *config)
-	PublishDeviceInfoToZedCloud(baseOsStatusMap, ctx.assignableAdapters)
-}
-
 // base os config modify event
 func handleBaseOsModify(ctxArg interface{}, statusFilename string,
-	configArg interface{}, statusArg interface{}) {
-	config := configArg.(*types.BaseOsConfig)
+	statusArg interface{}) {
 	status := statusArg.(*types.BaseOsStatus)
 	ctx := ctxArg.(*deviceContext)
-	uuidStr := config.UUIDandVersion.UUID.String()
+	uuidStr := status.UUIDandVersion.UUID.String()
 
-	log.Printf("handleBaseOsModify for %s\n", status.BaseOsVersion)
-	if config.UUIDandVersion.Version == status.UUIDandVersion.Version &&
-		config.Activate == status.Activated {
-		log.Printf("Same version %v for %s\n",
-			config.UUIDandVersion.Version, uuidStr)
-		return
-	}
-
-	// update the version field, uuis being the same
-	status.UUIDandVersion = config.UUIDandVersion
-	writeBaseOsStatus(status, uuidStr)
-
-	addOrUpdateBaseOsConfig(uuidStr, *config)
+	log.Printf("handleBaseOsModify(%s) for %s\n", status.BaseOsVersion, uuidStr)
+	addOrUpdateBaseOsStatus(uuidStr, status)
 	PublishDeviceInfoToZedCloud(baseOsStatusMap, ctx.assignableAdapters)
 }
 
 // base os config delete event
-func handleBaseOsDelete(ctxArg interface{}, statusFilename string,
-	statusArg interface{}) {
-	status := statusArg.(*types.BaseOsStatus)
+func handleBaseOsDelete(ctxArg interface{}, statusFilename string) {
 	ctx := ctxArg.(*deviceContext)
-
-	log.Printf("handleBaseOsDelete for %s\n", status.BaseOsVersion)
-	removeBaseOsConfig(status.UUIDandVersion.UUID.String())
+	uuidStr := statusFilename
+	log.Printf("handleBaseOsDelete for %s\n", uuidStr)
+	removeBaseOsStatus(uuidStr)
 	PublishDeviceInfoToZedCloud(baseOsStatusMap, ctx.assignableAdapters)
-}
-
-// certificate config/status event handlers
-// certificate config create event
-func handleCertObjCreate(ctxArg interface{}, statusFilename string,
-	configArg interface{}) {
-	config := configArg.(*types.CertObjConfig)
-	uuidStr := config.UUIDandVersion.UUID.String()
-
-	log.Printf("handleCertObjCreate for %s\n", uuidStr)
-	addOrUpdateCertObjConfig(uuidStr, *config)
-}
-
-// certificate config modify event
-func handleCertObjModify(ctxArg interface{}, statusFilename string,
-	configArg interface{}, statusArg interface{}) {
-	config := configArg.(*types.CertObjConfig)
-	status := statusArg.(*types.CertObjStatus)
-	uuidStr := config.UUIDandVersion.UUID.String()
-
-	log.Printf("handleCertObjModify for %s\n", uuidStr)
-
-	// XXX:FIXME, do we
-	if config.UUIDandVersion.Version == status.UUIDandVersion.Version {
-		log.Printf("Same version %v for %s\n",
-			config.UUIDandVersion.Version, statusFilename)
-		return
-	}
-
-	status.UUIDandVersion = config.UUIDandVersion
-	writeCertObjStatus(status, uuidStr)
-	addOrUpdateCertObjConfig(uuidStr, *config)
-}
-
-// certificate config delete event
-func handleCertObjDelete(ctxArg interface{}, statusFilename string,
-	statusArg interface{}) {
-	status := statusArg.(*types.CertObjStatus)
-	uuidStr := status.UUIDandVersion.UUID.String()
-
-	log.Printf("handleCertObjDelete for %s\n", uuidStr)
-
-	removeCertObjConfig(uuidStr)
-}
-
-// base os download status change event
-func handleBaseOsDownloadStatusModify(ctxArg interface{}, statusFilename string,
-	statusArg interface{}) {
-	status := statusArg.(*types.DownloaderStatus)
-
-	log.Printf("handleBaseOsDownloadStatusModify for %s\n",
-		status.Safename)
-	updateDownloaderStatus(baseOsObj, status)
-}
-
-// base os download status delete event
-func handleBaseOsDownloadStatusDelete(ctxArg interface{}, statusFilename string) {
-
-	log.Printf("handleBaseOsDownloadStatusDelete for %s\n",
-		statusFilename)
-	removeDownloaderStatus(baseOsObj, statusFilename)
-}
-
-// base os verification status change event
-func handleBaseOsVerifierStatusModify(ctxArg interface{}, statusFilename string,
-	statusArg interface{}) {
-	status := statusArg.(*types.VerifyImageStatus)
-
-	log.Printf("handleBaseOsVeriferStatusModify for %s\n",
-		status.Safename)
-	updateVerifierStatus(baseOsObj, status)
-}
-
-// base os verification status delete event
-func handleBaseOsVerifierStatusDelete(ctxArg interface{}, statusFilename string) {
-
-	log.Printf("handleBaseOsVeriferStatusDelete for %s\n",
-		statusFilename)
-	removeVerifierStatus(baseOsObj, statusFilename)
-}
-
-// cerificate download status change event
-func handleCertObjDownloadStatusModify(ctxArg interface{}, statusFilename string,
-	statusArg interface{}) {
-	status := statusArg.(*types.DownloaderStatus)
-
-	log.Printf("handleCertObjDownloadStatusModify for %s\n",
-		status.Safename)
-	updateDownloaderStatus(certObj, status)
-}
-
-// cerificate download status delete event
-func handleCertObjDownloadStatusDelete(ctxArg interface{}, statusFilename string) {
-
-	log.Printf("handleCertObjDownloadStatusDelete for %s\n",
-		statusFilename)
-	removeDownloaderStatus(certObj, statusFilename)
 }

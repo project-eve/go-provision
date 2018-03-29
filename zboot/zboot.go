@@ -15,11 +15,13 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // mutex for zboot/dd APIs
 // XXX not useful since this can be invoked by different agents
 var zbootMutex *sync.Mutex
+var immediate int = 30 // take a 30 second delay
 
 func init() {
 	zbootMutex = new(sync.Mutex)
@@ -406,5 +408,35 @@ func IsAvailable() bool {
 		return false
 	} else {
 		return true
+	}
+}
+
+func ExecReboot(state bool) {
+
+	// XXX:FIXME perform graceful service stop/ state backup
+
+	// do a sync
+	log.Printf("Doing a sync..\n")
+	syscall.Sync()
+
+	switch state {
+
+	case true:
+		log.Printf("Rebooting...\n")
+		duration := time.Duration(immediate)
+		timer := time.NewTimer(time.Second * duration)
+		<-timer.C
+		Reset()
+
+	case false:
+		log.Printf("Powering Off..\n")
+		duration := time.Duration(immediate)
+		timer := time.NewTimer(time.Second * duration)
+		<-timer.C
+		poweroffCmd := exec.Command("poweroff")
+		_, err := poweroffCmd.Output()
+		if err != nil {
+			log.Println(err)
+		}
 	}
 }

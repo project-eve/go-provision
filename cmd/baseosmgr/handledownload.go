@@ -1,8 +1,7 @@
 // Copyright (c) 2017 Zededa, Inc.
 // All rights reserved.
 
-// Pull AppInstanceConfig from ZedCloud, make it available for zedmanager
-// publish AppInstanceStatus to ZedCloud.
+// downloader event handler
 
 package main
 
@@ -17,10 +16,10 @@ import (
 	"time"
 )
 
-// zedagent publishes for these config files
+// baseOsMgr publishes these config files for downloader
 var downloaderConfigMap map[string]types.DownloaderConfig
 
-// zedagent is the subscriber for these status files
+// baseOsMgr is the subscriber for these status files
 var downloaderStatusMap map[string]types.DownloaderStatus
 
 func initDownloaderMaps() {

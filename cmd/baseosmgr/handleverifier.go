@@ -1,8 +1,7 @@
 // Copyright (c) 2017 Zededa, Inc.
 // All rights reserved.
 
-// Pull AppInstanceConfig from ZedCloud, make it available for zedmanager
-// publish AppInstanceStatus to ZedCloud.
+// verifier event handler
 
 package main
 
@@ -16,10 +15,10 @@ import (
 	"os"
 )
 
-// zedagent is the publishes for these config files
+// baseOsMgr publishes for these config files, for verifier
 var verifierConfigMap map[string]types.VerifyImageConfig
 
-// zedagent is the subscriber for these status files
+// baseOsMgr is the subscriber for these status files
 var verifierStatusMap map[string]types.VerifyImageStatus
 
 func initVerifierMaps() {
@@ -190,7 +189,6 @@ func lookupVerificationStatusSha256Internal(objType string, sha256 string) (*typ
 			return &status, nil
 		}
 	}
-
 	return nil, errors.New("No verificationStatusMap for sha")
 }
 

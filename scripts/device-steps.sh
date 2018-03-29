@@ -11,7 +11,7 @@ DNCDIR=$TMPDIR/DeviceNetworkConfig
 LISPDIR=/opt/zededa/lisp
 LOGDIRA=$PERSISTDIR/IMGA/log
 LOGDIRB=$PERSISTDIR/IMGB/log
-AGENTS="logmanager ledmanager zedrouter domainmgr downloader verifier identitymgr eidregister zedagent"
+AGENTS="logmanager ledmanager zedrouter domainmgr downloader verifier identitymgr eidregister baseosmgr zedagent"
 ALLAGENTS="zedmanager $AGENTS"
 
 PATH=$BINDIR:$PATH
@@ -89,6 +89,26 @@ fi
 echo "Removing old zedmanager status files"
 rm -rf /var/run/zedmanager/status/*.json
 
+pkill baseosmgr
+if [ x$OLDFLAG = x ]; then
+	echo "Removing old baseosmgr config files"
+	rm -rf /var/tmp/baseosmgr/baseOs.obj/config/*.json
+	rm -rf /var/tmp/baseosmgr/certObj.obj/config/*.json
+fi
+
+echo "Removing old baseosmgr status files"
+rm -rf /var/run/baseosmgr/baseOs.obj/status/*.json
+rm -rf /var/run/baseosmgr/cert.obj/status/*.json
+
+pkill zedagent
+if [ x$OLDFLAG = x ]; then
+	echo "Removing old zedagent config files"
+	rm -rf /var/tmp/zedagent/config/*.json
+fi
+
+echo "Removing old zedagent status files"
+rm -rf /var/run/zedagent/status/*.json
+
 # The following is a workaround for a racecondition between different agents
 # Make sure we have the required directories in place
 DIRS="$CONFIGDIR $PERSISTDIR $TMPDIR /var/tmp/ledmanager/config/ /var/tmp/domainmgr/config/ /var/tmp/verifier/config/ /var/tmp/downloader/config/ /var/tmp/zedmanager/config/ /var/tmp/identitymgr/config/ /var/tmp/zedrouter/config/ /var/run/domainmgr/status/ /var/run/downloader/status/ /var/run/zedmanager/status/ /var/run/eidregister/status/ /var/run/zedrouter/status/ /var/run/identitymgr/status/ $TMPDIR/DeviceNetworkConfig/ /var/run/zedrouter/DeviceNetworkStatus/ $TMPDIR/AssignableAdapters"
@@ -105,7 +125,7 @@ for d in $DIRS; do
 done
 
 # Some agents have multiple config and status files
-AGENTDIRS="$AGENTS verifier/appImg.obj verifier/baseOs.obj downloader/appImg.obj downloader/baseOs.obj downloader/cert.obj"
+AGENTDIRS="$AGENTS verifier/appImg.obj verifier/baseOs.obj downloader/appImg.obj downloader/baseOs.obj downloader/cert.obj baseosmgr/baseOs.obj baseosmgr/cert.obj"
 for AGENTDIR in $AGENTDIRS; do
     d=`dirname $AGENTDIR`
     if [ $d != '.' ]; then
@@ -143,7 +163,7 @@ done
 
 # Try to cleanup in case the agents are running or /var/run files are left over
 # If agents are running then the deletion of the /var/tmp/ files should
-# cleaned up all but /var/run/zedmanager/*.json
+# cleaned up all but /var/run/zedmanager/status/*.json
 
 if [ $CLEANUP = 0 ]; then
     # Add a tag to preserve any downloaded and verified files
@@ -578,6 +598,12 @@ fi
 echo "Starting DomainMgr at" `date`
 domainmgr &
 # Do something
+if [ $WAIT = 1 ]; then
+    echo -n "Press any key to continue "; read dummy; echo; echo
+fi
+
+echo "Starting BaseOsMgr at" `date`
+baseosmgr &
 if [ $WAIT = 1 ]; then
     echo -n "Press any key to continue "; read dummy; echo; echo
 fi
