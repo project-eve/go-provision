@@ -93,7 +93,7 @@ pkill baseosmgr
 if [ x$OLDFLAG = x ]; then
 	echo "Removing old baseosmgr config files"
 	rm -rf /var/tmp/baseosmgr/baseOs.obj/config/*.json
-	rm -rf /var/tmp/baseosmgr/certObj.obj/config/*.json
+	rm -rf /var/tmp/baseosmgr/cert.obj/config/*.json
 fi
 
 echo "Removing old baseosmgr status files"
