@@ -26,7 +26,7 @@ RUN go install github.com/zededa/go-provision/oldcmd/...
 RUN cd /opt/zededa/bin ; ln -s /go/bin/* .
 
 # Now building LISP
-FROM zededa/lisp:latest AS lisp
+FROM zededa/lisp:0.1.0 AS lisp
 
 # Second stage of the build is creating a minimalistic container
 FROM scratch
