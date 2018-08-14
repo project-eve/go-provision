@@ -57,10 +57,11 @@ const (
 		"\n\tike=aes128-sha1-modp1024" +
 		"\n\tikelifetime=8h" +
 		"\n\tesp=aes128-sha1" +
+		"\n\tforceencaps=yes" +
 		"\n\tlifetime=1h" +
 		"\n"
 	ipSecSvrTunLeftHdrSpecStr = "\nconn rw" +
-		"\n\tauto=add" + "\n\tleftid=%any" + "\n\tleft="
+		"\n\tleftid=%any" + "\n\tleft="
 	ipSecSvrTunLeftAttribSpecStr = "\n\tleftfirewall=yes" +
 		"\n\tleftsubnet=0.0.0.0/0" +
 		"\n\ttype=tunnel" + "\n"
@@ -69,8 +70,7 @@ const (
 		"\n\trightid=%any" +
 		"\n\tright="
 	ipSecSvrTunRightAttribSpecStr = "\n\trightsubnet=0.0.0.0/0" +
-		"\n\tdpddelay=10s" + "\n\tdpdtimeout=30s" +
-		"\n\tdpdaction=clear" + "\n\tauto=add" + "\n"
+		"\n\tauto=add" + "\n"
 )
 
 func ipSecServiceActivate(vpnConfig types.VpnServiceConfig) error {
@@ -807,10 +807,12 @@ func ipSecSecretConfigCreate(vpnConfig types.VpnServiceConfig) error {
 	case OnPremVpnServer:
 		// one or more client(s)
 		for _, clientConfig := range clientConfigList {
-			writeStr = writeStr + gatewayConfig.IpAddr + " "
-			writeStr = writeStr + clientConfig.IpAddr
-			writeStr = writeStr + " : PSK " + clientConfig.PreSharedKey
-			writeStr = writeStr + "\n"
+			secretStr := gatewayConfig.IpAddr + " " + clientConfig.IpAddr
+			secretStr = secretStr + " : PSK " + clientConfig.PreSharedKey
+			secretStr = secretStr + "\n"
+			if !strings.Contains(writeStr, secretStr) {
+				writeStr = writeStr + secretStr
+			}
 		}
 	}
 	writeStr = writeStr + "\n"
