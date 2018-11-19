@@ -20,6 +20,7 @@ import (
 type AppNetworkConfig struct {
 	UUIDandVersion      UUIDandVersion
 	DisplayName         string
+	Activate            bool
 	IsZedmanager        bool
 	SeparateDataPlane   bool
 	OverlayNetworkList  []OverlayNetworkConfig
@@ -60,11 +61,10 @@ func (status AppNetworkStatus) Pending() bool {
 type AppNetworkStatus struct {
 	UUIDandVersion UUIDandVersion
 	AppNum         int
+	Activated      bool
 	PendingAdd     bool
 	PendingModify  bool
 	PendingDelete  bool
-	UlNum          int // Number of underlay interfaces
-	OlNum          int // Number of overlay interfaces
 	DisplayName    string
 	// Copy from the AppNetworkConfig; used to delete when config is gone.
 	IsZedmanager        bool
@@ -100,15 +100,35 @@ type DeviceNetworkConfig struct {
 
 type DeviceUplinkConfig struct {
 	Uplinks []NetworkUplinkConfig
-	ProxyConfig
+}
+
+type NetworkProxyType uint8
+
+// Values if these definitions should match the values
+// given to the types in zapi.ProxyProto
+const (
+	NPT_HTTP NetworkProxyType = iota
+	NPT_HTTPS
+	NPT_SOCKS
+	NPT_FTP
+	NPT_NOPROXY
+	NPT_LAST = 255
+)
+
+type ProxyEntry struct {
+	Type   NetworkProxyType
+	Server string
+	Port   uint32
 }
 
 type ProxyConfig struct {
-	HttpsProxy string // HTTPS_PROXY environment variable
-	HttpProxy  string // HTTP_PROXY environment variable
-	FtpProxy   string // FTP_PROXY environment variable
-	SocksProxy string // SOCKS_PROXY environment variable
-	NoProxy    string // NO_PROXY environment variable
+	Proxies    []ProxyEntry
+	Exceptions string
+	Pacfile    string
+	// If Enable is set we use WPAD. If the URL is not set we try
+	// the various DNS suffixes until we can download a wpad.dat file
+	NetworkProxyEnable bool   // Enable WPAD
+	NetworkProxyURL    string // Complete URL i.e., with /wpad.dat
 }
 
 type NetworkUplinkConfig struct {
@@ -120,6 +140,7 @@ type NetworkUplinkConfig struct {
 	DomainName string
 	NtpServer  net.IP
 	DnsServers []net.IP // If not set we use Gateway as DNS server
+	ProxyConfig
 }
 
 type NetworkUplink struct {
@@ -127,6 +148,9 @@ type NetworkUplink struct {
 	Free   bool
 	NetworkObjectConfig
 	AddrInfoList []AddrInfo
+	ProxyConfig
+	Error     string
+	ErrorTime time.Time
 }
 
 type AddrInfo struct {
@@ -137,7 +161,6 @@ type AddrInfo struct {
 
 type DeviceNetworkStatus struct {
 	UplinkStatus []NetworkUplink
-	ProxyConfig
 }
 
 // Pick one of the uplinks
@@ -495,6 +518,7 @@ type NetworkObjectConfig struct {
 	DnsServers      []net.IP // If not set we use Gateway as DNS server
 	DhcpRange       IpRange
 	DnsNameToIPList []DnsNameToIP // Used for DNS and ACL ipset
+	Proxy           *ProxyConfig
 }
 
 type IpRange struct {

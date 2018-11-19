@@ -75,6 +75,7 @@ func parseConfig(config *zconfig.EdgeDevConfig, getconfigCtx *getconfigContext,
 	parseBaseOsConfig(getconfigCtx, config)
 	parseNetworkObjectConfig(config, getconfigCtx)
 	parseNetworkServiceConfig(config, getconfigCtx)
+	parseSystemAdapterConfig(config, getconfigCtx, false)
 	parseAppInstanceConfig(config, getconfigCtx)
 
 	return false
@@ -236,7 +237,10 @@ func parseNetworkObjectConfig(config *zconfig.EdgeDevConfig,
 	log.Infof("parseNetworkObjectConfig: Applying updated config sha % x vs. % x: %v\n",
 		networkConfigPrevConfigHash, configHash, nets)
 	// Export NetworkObjectConfig to zedrouter
-	publishNetworkObjectConfig(getconfigCtx, nets)
+	parseSystemAdapters := publishNetworkObjectConfig(getconfigCtx, nets)
+	if parseSystemAdapters {
+		parseSystemAdapterConfig(config, getconfigCtx, true)
+	}
 }
 
 var networkServicePrevConfigHash []byte
@@ -375,6 +379,74 @@ func parseAppInstanceConfig(config *zconfig.EdgeDevConfig,
 	}
 }
 
+var systemAdaptersPrevConfigHash []byte
+
+func parseSystemAdapterConfig(config *zconfig.EdgeDevConfig,
+	getconfigCtx *getconfigContext, forceParse bool) {
+	log.Debugf("parseSystemAdapterConfig: EdgeDevConfig: %v\n", *config)
+
+	sysAdapters := config.GetSystemAdapterList()
+	h := sha256.New()
+	for _, a := range sysAdapters {
+		computeConfigElementSha(h, a)
+	}
+	configHash := h.Sum(nil)
+	same := bytes.Equal(configHash, systemAdaptersPrevConfigHash)
+	systemAdaptersPrevConfigHash = configHash
+	if same && !forceParse {
+		log.Debugf("parseSystemAdapterConfig: system adapter sha is unchanged: % x\n",
+			configHash)
+		return
+	}
+	log.Infof("parseSystemAdapterConfig: Applying updated config sha % x vs. % x: %v\n",
+		systemAdaptersPrevConfigHash, configHash, sysAdapters)
+
+	//uplinkConfig := &types.DeviceUplinkConfig{}
+	newUplinks := []types.NetworkUplinkConfig{}
+	for _, sysAdapter := range sysAdapters {
+		// XXX Make Uplink and FreeUplink true
+		// This should go away when cloud sends proper values
+		//if !sysAdapter.Uplink {
+		//	continue
+		//}
+		sysAdapter.Uplink = true
+		sysAdapter.FreeUplink = true
+
+		uplink := types.NetworkUplinkConfig{}
+		uplink.IfName = sysAdapter.Name
+		uplink.Free = sysAdapter.FreeUplink
+		uplink.Dhcp = types.DT_CLIENT
+
+		// Lookup the network with given UUID
+		// and copy proxy configuration
+		networkObject, err := getconfigCtx.pubNetworkObjectConfig.Get(sysAdapter.NetworkUUID)
+		if err != nil {
+			log.Errorf("parseSystemAdapterConfig: Network with UUID %s not found: %s\n",
+				sysAdapter.NetworkUUID, err)
+			continue
+		}
+		network := cast.CastNetworkObjectConfig(networkObject)
+		if network.Proxy != nil {
+			uplink.ProxyConfig = *network.Proxy
+			uplink.AddrSubnet = sysAdapter.Addr
+			// XXX Only use for systerm adapter now is to pass proxy configuration
+			// from cloud. It is useless without proxy configuration.
+			//uplinkConfig.Uplinks = append(uplinkConfig.Uplinks, uplink)
+			newUplinks = append(newUplinks, uplink)
+		}
+	}
+	//if len(uplinkConfig.Uplinks) == 0 {
+	if len(newUplinks) == 0 {
+		log.Infof("parseSystemAdapterConfig: No Uplink configuration present")
+		return
+	}
+	uplinkConfig := &types.DeviceUplinkConfig{}
+	uplinkConfig.Uplinks = newUplinks
+
+	getconfigCtx.pubDeviceUplinkConfig.Publish("zedagent", *uplinkConfig)
+	log.Infof("parseSystemAdapterConfig: Done")
+}
+
 func lookupDatastore(datastores []*zconfig.DatastoreConfig,
 	dsid string) *zconfig.DatastoreConfig {
 
@@ -502,7 +574,7 @@ func lookupServiceId(id string, cfgServices []*zconfig.ServiceInstanceConfig) *z
 }
 
 func publishNetworkObjectConfig(ctx *getconfigContext,
-	cfgNetworks []*zconfig.NetworkConfig) {
+	cfgNetworks []*zconfig.NetworkConfig) (parseSystemAdapters bool) {
 
 	// Check for items to delete first
 	items := ctx.pubNetworkObjectConfig.GetAll()
@@ -514,6 +586,14 @@ func publishNetworkObjectConfig(ctx *getconfigContext,
 		log.Debugf("publishNetworkObjectConfig: unpublishing %s\n", k)
 		ctx.pubNetworkObjectConfig.Unpublish(k)
 	}
+
+	// XXX
+	// System Adapter point to network for Proxy configuration.
+	// There could be a situation where networks change, but
+	// systerm adapters do not change. When we see the networks
+	// change and there is a proxy configuration present in them,
+	// we should parse systerm adapters again.
+	var proxyConfigPresent bool = false
 	// XXX note that we currently get repeats in the same loop.
 	// Should we track them and not rewrite them?
 	for _, netEnt := range cfgNetworks {
@@ -526,6 +606,48 @@ func publishNetworkObjectConfig(ctx *getconfigContext,
 		config := types.NetworkObjectConfig{
 			UUID: id,
 			Type: types.NetworkType(netEnt.Type),
+		}
+		// proxy configuration from cloud network configuration
+		netProxyConfig := netEnt.GetEntProxy()
+		if netProxyConfig == nil {
+			log.Infof("publishNetworkObjectConfig: EntProxy of network %s is nil",
+				netEnt.Id)
+		}
+		if netProxyConfig != nil {
+			proxyConfigPresent = true
+			log.Infof("publishNetworkObjectConfig: Proxy configuration present in %s",
+				netEnt.Id)
+
+			proxyConfig := types.ProxyConfig{
+				NetworkProxyEnable: netProxyConfig.NetworkProxyEnable,
+				NetworkProxyURL:    netProxyConfig.NetworkProxyURL,
+				Pacfile:            netProxyConfig.Pacfile,
+			}
+			proxyConfig.Exceptions = netProxyConfig.Exceptions
+
+			// parse the static proxy entries
+			for _, proxy := range netProxyConfig.Proxies {
+				proxyEntry := types.ProxyEntry{
+					Server: proxy.Server,
+					Port:   proxy.Port,
+				}
+				switch proxy.Proto {
+				case zconfig.ProxyProto_PROXY_HTTP:
+					proxyEntry.Type = types.NPT_HTTP
+				case zconfig.ProxyProto_PROXY_HTTPS:
+					proxyEntry.Type = types.NPT_HTTPS
+				case zconfig.ProxyProto_PROXY_SOCKS:
+					proxyEntry.Type = types.NPT_SOCKS
+				case zconfig.ProxyProto_PROXY_FTP:
+					proxyEntry.Type = types.NPT_FTP
+				default:
+				}
+				proxyConfig.Proxies = append(proxyConfig.Proxies, proxyEntry)
+				log.Debugf("publishNetworkObjectConfig: Adding proxy entry %s:%d in %s",
+					proxyEntry.Server, proxyEntry.Port, netEnt.Id)
+			}
+
+			config.Proxy = &proxyConfig
 		}
 
 		log.Infof("publishNetworkObjectConfig: processing %s type %d\n",
@@ -583,6 +705,10 @@ func publishNetworkObjectConfig(ctx *getconfigContext,
 		ctx.pubNetworkObjectConfig.Publish(config.Key(),
 			&config)
 	}
+	if proxyConfigPresent {
+		return true
+	}
+	return false
 }
 
 func parseIpspec(ipspec *zconfig.Ipspec, config *types.NetworkObjectConfig) error {

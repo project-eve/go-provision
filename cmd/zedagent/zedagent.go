@@ -30,7 +30,6 @@ import (
 	"github.com/zededa/go-provision/adapters"
 	"github.com/zededa/go-provision/agentlog"
 	"github.com/zededa/go-provision/cast"
-	"github.com/zededa/go-provision/devicenetwork"
 	"github.com/zededa/go-provision/hardware"
 	"github.com/zededa/go-provision/pidfile"
 	"github.com/zededa/go-provision/pubsub"
@@ -152,9 +151,6 @@ func Run() {
 	// initialize the module specific stuff
 	handleInit()
 
-	// Context to pass around
-	getconfigCtx := getconfigContext{}
-
 	// Pick up (mostly static) AssignableAdapters before we report
 	// any device info
 	model := hardware.GetHardwareModel()
@@ -162,7 +158,10 @@ func Run() {
 	aa := types.AssignableAdapters{}
 	subAa := adapters.Subscribe(&aa, model)
 
+	// Context to pass around
+	getconfigCtx := getconfigContext{}
 	zedagentCtx := zedagentContext{assignableAdapters: &aa}
+
 	// Cross link
 	getconfigCtx.zedagentCtx = &zedagentCtx
 	zedagentCtx.getconfigCtx = &getconfigCtx
@@ -381,7 +380,23 @@ func Run() {
 	zedagentCtx.subAppImgDownloadStatus = subAppImgDownloadStatus
 	subAppImgDownloadStatus.Activate()
 
-	// noe start other things
+	// Run a periodic timer so we always update SillRunning
+	stillRunning := time.NewTicker(25 * time.Second)
+	agentlog.StillRunning(agentName)
+
+	DNSctx := DNSContext{}
+	DNSctx.usableAddressCount = types.CountLocalAddrAnyNoLinkLocal(deviceNetworkStatus)
+
+	subDeviceNetworkStatus, err := pubsub.Subscribe("zedrouter",
+		types.DeviceNetworkStatus{}, false, &DNSctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	subDeviceNetworkStatus.ModifyHandler = handleDNSModify
+	subDeviceNetworkStatus.DeleteHandler = handleDNSDelete
+	DNSctx.subDeviceNetworkStatus = subDeviceNetworkStatus
+	subDeviceNetworkStatus.Activate()
+
 	updateInprogress := zboot.IsCurrentPartitionStateInProgress()
 	time1 := time.Duration(globalConfig.ResetIfCloudGoneTime)
 	t1 := time.NewTimer(time1 * time.Second)
@@ -404,6 +419,9 @@ func Run() {
 		select {
 		case change := <-subGlobalConfig.C:
 			subGlobalConfig.ProcessChange(change)
+
+		case change := <-subBaseOsVerifierStatus.C:
+			subBaseOsVerifierStatus.ProcessChange(change)
 
 		case change := <-subDeviceNetworkStatus.C:
 			subDeviceNetworkStatus.ProcessChange(change)
@@ -465,16 +483,43 @@ func Run() {
 	// Publish initial device info. Retries all addresses on all uplinks.
 	publishDevInfo(&zedagentCtx)
 
-	// start the metrics/config fetch tasks
+	// start the metrics reporting task
 	handleChannel := make(chan interface{})
-	go configTimerTask(handleChannel, &getconfigCtx)
-	log.Infof("Waiting for flexticker handle\n")
-	configTickerHandle := <-handleChannel
 	go metricsTimerTask(&zedagentCtx, handleChannel)
 	metricsTickerHandle := <-handleChannel
+	getconfigCtx.metricsTickerHandle = metricsTickerHandle
+
+	// Process the verifierStatus to avoid downloading an image we
+	// already have in place
+	log.Infof("Handling initial verifier Status\n")
+	for !zedagentCtx.verifierRestarted {
+		select {
+		case change := <-subGlobalConfig.C:
+			subGlobalConfig.ProcessChange(change)
+
+		case change := <-subBaseOsVerifierStatus.C:
+			subBaseOsVerifierStatus.ProcessChange(change)
+			if zedagentCtx.verifierRestarted {
+				log.Infof("Verifier reported restarted\n")
+				break
+			}
+
+		case change := <-subDeviceNetworkStatus.C:
+			subDeviceNetworkStatus.ProcessChange(change)
+
+		case change := <-subAa.C:
+			subAa.ProcessChange(change)
+
+		case <-stillRunning.C:
+			agentlog.StillRunning(agentName)
+		}
+	}
+
+	// start the config fetch tasks after we've heard from verifier
+	go configTimerTask(handleChannel, &getconfigCtx)
+	configTickerHandle := <-handleChannel
 	// XXX close handleChannels?
 	getconfigCtx.configTickerHandle = configTickerHandle
-	getconfigCtx.metricsTickerHandle = metricsTickerHandle
 
 	updateSshAccess(!globalConfig.NoSshAccess, true)
 
@@ -665,7 +710,6 @@ func handleDNSModify(ctxArg interface{}, key string, statusArg interface{}) {
 	}
 	ctx.usableAddressCount = newAddrCount
 	ctx.triggerDeviceInfo = true
-	devicenetwork.ProxyToEnv(deviceNetworkStatus.ProxyConfig)
 	log.Infof("handleDNSModify done for %s\n", key)
 }
 
@@ -682,7 +726,6 @@ func handleDNSDelete(ctxArg interface{}, key string,
 	deviceNetworkStatus = types.DeviceNetworkStatus{}
 	newAddrCount := types.CountLocalAddrAnyNoLinkLocal(deviceNetworkStatus)
 	ctx.usableAddressCount = newAddrCount
-	devicenetwork.ProxyToEnv(deviceNetworkStatus.ProxyConfig)
 	log.Infof("handleDNSDelete done for %s\n", key)
 }
 
