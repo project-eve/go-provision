@@ -297,6 +297,7 @@ func Run() {
 	zedagentCtx.subDomainStatus = subDomainStatus
 	subDomainStatus.Activate()
 
+	// For Status reporting and reboot functionality
 	subBaseOsStatus, err := pubsub.Subscribe("baseosmgr",
 		types.BaseOsStatus{}, false, &zedagentCtx)
 	if err != nil {
@@ -325,6 +326,7 @@ func Run() {
 	subDeviceNetworkStatus.Activate()
 
 	// Look for DownloaderStatus from downloader
+	// Only for storage status
 	subBaseOsDownloadStatus, err := pubsub.SubscribeScope("downloader",
 		baseOsObj, types.DownloaderStatus{}, false, &zedagentCtx)
 	if err != nil {
@@ -336,6 +338,7 @@ func Run() {
 	subBaseOsDownloadStatus.Activate()
 
 	// Look for DownloaderStatus from downloader
+	// Only for storage status
 	subCertObjDownloadStatus, err := pubsub.SubscribeScope("downloader",
 		certObj, types.DownloaderStatus{}, false, &zedagentCtx)
 	if err != nil {
@@ -347,6 +350,7 @@ func Run() {
 	subCertObjDownloadStatus.Activate()
 
 	// Look for VerifyImageStatus from verifier
+	// Only for storage status
 	subBaseOsVerifierStatus, err := pubsub.SubscribeScope("verifier",
 		baseOsObj, types.VerifyImageStatus{}, false, &zedagentCtx)
 	if err != nil {
@@ -359,6 +363,7 @@ func Run() {
 	subBaseOsVerifierStatus.Activate()
 
 	// Look for VerifyImageStatus from verifier
+	// Only for storage status
 	subAppImgVerifierStatus, err := pubsub.SubscribeScope("verifier",
 		appImgObj, types.VerifyImageStatus{}, false, &zedagentCtx)
 	if err != nil {
@@ -370,6 +375,7 @@ func Run() {
 	subAppImgVerifierStatus.Activate()
 
 	// Look for DownloaderStatus from downloader for metric reporting
+	// Only for storage status
 	subAppImgDownloadStatus, err := pubsub.SubscribeScope("downloader",
 		appImgObj, types.DownloaderStatus{}, false, &zedagentCtx)
 	if err != nil {
