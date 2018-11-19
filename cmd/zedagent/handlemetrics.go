@@ -537,6 +537,7 @@ func PublishMetricsToZedCloud(ctx *zedagentContext, cpuStorageStat [][]string,
 		}
 		ReportDeviceMetric.Disk = append(ReportDeviceMetric.Disk, &metric)
 	}
+
 	// Walk all verified downloads and report their size (faked
 	// as disks)
 	verifierStatusMap := verifierGetAll(ctx)
@@ -1492,4 +1493,71 @@ func lookupNetworkObjectStatusByMac(ctx *zedagentContext,
 		}
 	}
 	return nil
+}
+
+func downloaderSubscription(ctx *zedagentContext, objType string) *pubsub.Subscription {
+	var sub *pubsub.Subscription
+	switch objType {
+	case baseOsObj:
+		sub = ctx.subBaseOsDownloadStatus
+	case certObj:
+		sub = ctx.subCertObjDownloadStatus
+	case appImgObj:
+		sub = ctx.subAppImgDownloadStatus
+	default:
+		log.Fatalf("downloaderSubscription: Unknown ObjType %s\n",
+			objType)
+	}
+	return sub
+}
+
+func downloaderGetAll(ctx *zedagentContext) map[string]interface{} {
+	sub1 := downloaderSubscription(ctx, baseOsObj)
+	items1 := sub1.GetAll()
+	sub2 := downloaderSubscription(ctx, certObj)
+	items2 := sub2.GetAll()
+	sub3 := downloaderSubscription(ctx, appImgObj)
+	items3 := sub3.GetAll()
+
+	items := make(map[string]interface{})
+	for k, i := range items1 {
+		items[k] = i
+	}
+	for k, i := range items2 {
+		items[k] = i
+	}
+	for k, i := range items3 {
+		items[k] = i
+	}
+	return items
+}
+
+func verifierSubscription(ctx *zedagentContext, objType string) *pubsub.Subscription {
+	var sub *pubsub.Subscription
+	switch objType {
+	case baseOsObj:
+		sub = ctx.subBaseOsVerifierStatus
+	case appImgObj:
+		sub = ctx.subAppImgVerifierStatus
+	default:
+		log.Fatalf("verifierSubscription: Unknown ObjType %s\n",
+			objType)
+	}
+	return sub
+}
+
+func verifierGetAll(ctx *zedagentContext) map[string]interface{} {
+	sub1 := verifierSubscription(ctx, baseOsObj)
+	items1 := sub1.GetAll()
+	sub2 := verifierSubscription(ctx, appImgObj)
+	items2 := sub2.GetAll()
+
+	items := make(map[string]interface{})
+	for k, i := range items1 {
+		items[k] = i
+	}
+	for k, i := range items2 {
+		items[k] = i
+	}
+	return items
 }

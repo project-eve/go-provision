@@ -75,7 +75,6 @@ type getconfigContext struct {
 	pubDeviceUplinkConfig       *pubsub.Publication
 	pubNetworkObjectConfig      *pubsub.Publication
 	pubNetworkServiceConfig     *pubsub.Publication
-	subAppInstanceStatus        *pubsub.Subscription
 	pubAppInstanceConfig        *pubsub.Publication
 	pubAppNetworkConfig         *pubsub.Publication
 	pubCertObjConfig            *pubsub.Publication
@@ -257,10 +256,6 @@ func getLatestConfig(url string, iteration int, updateInprogress *bool,
 				curPart)
 			if err := zboot.MarkOtherPartitionStateActive(); err != nil {
 				log.Errorf("mark other active failed %s\n", err)
-			} else {
-				// Update and publish the change
-				baseOsGetActivationStatusAll(getconfigCtx.zedagentCtx)
-				*updateInprogress = false
 			}
 		}
 	}

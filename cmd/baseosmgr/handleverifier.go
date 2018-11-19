@@ -1,7 +1,7 @@
 // Copyright (c) 2017-2018 Zededa, Inc.
 // All rights reserved.
 
-package zedagent
+package baseosmgr
 
 import (
 	log "github.com/sirupsen/logrus"
@@ -11,7 +11,7 @@ import (
 	"os"
 )
 
-func verifierConfigGetSha256(ctx *zedagentContext, objType string,
+func verifierConfigGetSha256(ctx *baseOsMgrContext, objType string,
 	sha string) *types.VerifyImageConfig {
 
 	log.Infof("verifierConfigGetSha256(%s/%s)\n", objType, sha)
@@ -29,7 +29,7 @@ func verifierConfigGetSha256(ctx *zedagentContext, objType string,
 	return nil
 }
 
-func lookupVerifierConfig(ctx *zedagentContext, objType string,
+func lookupVerifierConfig(ctx *baseOsMgrContext, objType string,
 	safename string) *types.VerifyImageConfig {
 
 	pub := verifierPublication(ctx, objType)
@@ -49,7 +49,7 @@ func lookupVerifierConfig(ctx *zedagentContext, objType string,
 }
 
 // If checkCerts is set this can return an error. Otherwise not.
-func createVerifierConfig(ctx *zedagentContext, objType string, safename string,
+func createVerifierConfig(ctx *baseOsMgrContext, objType string, safename string,
 	sc *types.StorageConfig, checkCerts bool) error {
 
 	log.Infof("createVerifierConfig(%s/%s)\n", objType, safename)
@@ -83,7 +83,7 @@ func createVerifierConfig(ctx *zedagentContext, objType string, safename string,
 	return nil
 }
 
-func updateVerifierStatus(ctx *zedagentContext,
+func updateVerifierStatus(ctx *baseOsMgrContext,
 	status *types.VerifyImageStatus) {
 
 	key := status.Key()
@@ -144,7 +144,7 @@ func updateVerifierStatus(ctx *zedagentContext,
 	log.Infof("updateVerifierStatus(%s) done\n", key)
 }
 
-func MaybeRemoveVerifierConfigSha256(ctx *zedagentContext, objType string,
+func MaybeRemoveVerifierConfigSha256(ctx *baseOsMgrContext, objType string,
 	sha256 string) {
 
 	log.Infof("MaybeRemoveVerifierConfigSha256(%s/%s)\n", objType, sha256)
@@ -170,10 +170,10 @@ func MaybeRemoveVerifierConfigSha256(ctx *zedagentContext, objType string,
 }
 
 // Note that this function returns the entry even if Pending* is set.
-func lookupVerificationStatusSha256(ctx *zedagentContext, objType string,
+func lookupVerificationStatusSha256(ctx *baseOsMgrContext, objType string,
 	sha256 string) *types.VerifyImageStatus {
 
-	sub := verifierSubscription(ctx, objType)
+	sub := ctx.subBaseOsVerifierStatus
 	items := sub.GetAll()
 	for _, st := range items {
 		status := cast.CastVerifyImageStatus(st)
@@ -185,10 +185,10 @@ func lookupVerificationStatusSha256(ctx *zedagentContext, objType string,
 }
 
 // Note that this function returns the entry even if Pending* is set.
-func lookupVerificationStatus(ctx *zedagentContext, objType string,
+func lookupVerificationStatus(ctx *baseOsMgrContext, objType string,
 	safename string) *types.VerifyImageStatus {
 
-	sub := verifierSubscription(ctx, objType)
+	sub := ctx.subBaseOsVerifierStatus
 	c, _ := sub.Get(safename)
 	if c == nil {
 		log.Infof("lookupVerifierStatus(%s/%s) not found\n",
@@ -205,7 +205,7 @@ func lookupVerificationStatus(ctx *zedagentContext, objType string,
 }
 
 // Note that this function returns the entry even if Pending* is set.
-func lookupVerificationStatusAny(ctx *zedagentContext, objType string,
+func lookupVerificationStatusAny(ctx *baseOsMgrContext, objType string,
 	safename string, sha256 string) *types.VerifyImageStatus {
 
 	m := lookupVerificationStatus(ctx, objType, safename)
@@ -220,7 +220,7 @@ func lookupVerificationStatusAny(ctx *zedagentContext, objType string,
 	return nil
 }
 
-func checkStorageVerifierStatus(ctx *zedagentContext, objType string, uuidStr string,
+func checkStorageVerifierStatus(ctx *baseOsMgrContext, objType string, uuidStr string,
 	config []types.StorageConfig, status []types.StorageStatus) *types.RetStatus {
 
 	ret := &types.RetStatus{}
@@ -291,7 +291,7 @@ func checkStorageVerifierStatus(ctx *zedagentContext, objType string, uuidStr st
 	return ret
 }
 
-func publishVerifierConfig(ctx *zedagentContext, objType string,
+func publishVerifierConfig(ctx *baseOsMgrContext, objType string,
 	config *types.VerifyImageConfig) {
 
 	key := config.Key()
@@ -300,7 +300,7 @@ func publishVerifierConfig(ctx *zedagentContext, objType string,
 	pub.Publish(key, config)
 }
 
-func unpublishVerifierConfig(ctx *zedagentContext, objType string,
+func unpublishVerifierConfig(ctx *baseOsMgrContext, objType string,
 	config *types.VerifyImageConfig) {
 
 	key := config.Key()
@@ -362,7 +362,7 @@ func checkCertsForObject(safename string, sc *types.StorageConfig) error {
 	return nil
 }
 
-func verifierPublication(ctx *zedagentContext, objType string) *pubsub.Publication {
+func verifierPublication(ctx *baseOsMgrContext, objType string) *pubsub.Publication {
 	var pub *pubsub.Publication
 	switch objType {
 	case baseOsObj:
@@ -372,34 +372,4 @@ func verifierPublication(ctx *zedagentContext, objType string) *pubsub.Publicati
 			objType)
 	}
 	return pub
-}
-
-func verifierSubscription(ctx *zedagentContext, objType string) *pubsub.Subscription {
-	var sub *pubsub.Subscription
-	switch objType {
-	case baseOsObj:
-		sub = ctx.subBaseOsVerifierStatus
-	case appImgObj:
-		sub = ctx.subAppImgVerifierStatus
-	default:
-		log.Fatalf("verifierSubscription: Unknown ObjType %s\n",
-			objType)
-	}
-	return sub
-}
-
-func verifierGetAll(ctx *zedagentContext) map[string]interface{} {
-	sub1 := verifierSubscription(ctx, baseOsObj)
-	items1 := sub1.GetAll()
-	sub2 := verifierSubscription(ctx, appImgObj)
-	items2 := sub2.GetAll()
-
-	items := make(map[string]interface{})
-	for k, i := range items1 {
-		items[k] = i
-	}
-	for k, i := range items2 {
-		items[k] = i
-	}
-	return items
 }

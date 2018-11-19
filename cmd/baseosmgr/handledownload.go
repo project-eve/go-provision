@@ -1,7 +1,7 @@
 // Copyright (c) 2017-2018 Zededa, Inc.
 // All rights reserved.
 
-package zedagent
+package baseosmgr
 
 import (
 	"errors"
@@ -16,7 +16,9 @@ import (
 	"time"
 )
 
-func lookupDownloaderConfig(ctx *zedagentContext, objType string,
+var nilUUID uuid.UUID
+
+func lookupDownloaderConfig(ctx *baseOsMgrContext, objType string,
 	safename string) *types.DownloaderConfig {
 
 	pub := downloaderPublication(ctx, objType)
@@ -35,7 +37,7 @@ func lookupDownloaderConfig(ctx *zedagentContext, objType string,
 	return &config
 }
 
-func createDownloaderConfig(ctx *zedagentContext, objType string,
+func createDownloaderConfig(ctx *baseOsMgrContext, objType string,
 	safename string, sc *types.StorageConfig, ds *types.DatastoreConfig) {
 
 	log.Infof("createDownloaderConfig(%s/%s)\n", objType, safename)
@@ -83,7 +85,7 @@ func createDownloaderConfig(ctx *zedagentContext, objType string,
 	log.Infof("createDownloaderConfig(%s/%s) done\n", objType, safename)
 }
 
-func updateDownloaderStatus(ctx *zedagentContext,
+func updateDownloaderStatus(ctx *baseOsMgrContext,
 	status *types.DownloaderStatus) {
 
 	key := status.Key()
@@ -152,7 +154,7 @@ func updateDownloaderStatus(ctx *zedagentContext,
 }
 
 // Lookup published config;
-func removeDownloaderConfig(ctx *zedagentContext, objType string, safename string) {
+func removeDownloaderConfig(ctx *baseOsMgrContext, objType string, safename string) {
 
 	log.Infof("removeDownloaderConfig(%s/%s)\n", objType, safename)
 
@@ -174,7 +176,7 @@ func removeDownloaderConfig(ctx *zedagentContext, objType string, safename strin
 }
 
 // Note that this function returns the entry even if Pending* is set.
-func lookupDownloaderStatus(ctx *zedagentContext, objType string,
+func lookupDownloaderStatus(ctx *baseOsMgrContext, objType string,
 	safename string) *types.DownloaderStatus {
 
 	sub := downloaderSubscription(ctx, objType)
@@ -193,7 +195,7 @@ func lookupDownloaderStatus(ctx *zedagentContext, objType string,
 	return &status
 }
 
-func checkStorageDownloadStatus(ctx *zedagentContext, objType string,
+func checkStorageDownloadStatus(ctx *baseOsMgrContext, objType string,
 	uuidStr string, config []types.StorageConfig,
 	status []types.StorageStatus) *types.RetStatus {
 
@@ -369,7 +371,7 @@ func checkStorageDownloadStatus(ctx *zedagentContext, objType string,
 
 // Check for nil UUID (an indication the drive was missing in parseconfig)
 // and a missing datastore id.
-func lookupDatastoreConfig(ctx *zedagentContext,
+func lookupDatastoreConfig(ctx *baseOsMgrContext,
 	datastoreId uuid.UUID, name string) (*types.DatastoreConfig, error) {
 
 	if datastoreId == nilUUID {
@@ -494,7 +496,7 @@ func installDownloadedObject(objType string, safename string,
 	return ret
 }
 
-func publishDownloaderConfig(ctx *zedagentContext, objType string,
+func publishDownloaderConfig(ctx *baseOsMgrContext, objType string,
 	config *types.DownloaderConfig) {
 
 	key := config.Key()
@@ -503,7 +505,7 @@ func publishDownloaderConfig(ctx *zedagentContext, objType string,
 	pub.Publish(key, config)
 }
 
-func unpublishDownloaderConfig(ctx *zedagentContext, objType string,
+func unpublishDownloaderConfig(ctx *baseOsMgrContext, objType string,
 	config *types.DownloaderConfig) {
 
 	key := config.Key()
@@ -517,7 +519,7 @@ func unpublishDownloaderConfig(ctx *zedagentContext, objType string,
 	pub.Unpublish(key)
 }
 
-func downloaderPublication(ctx *zedagentContext, objType string) *pubsub.Publication {
+func downloaderPublication(ctx *baseOsMgrContext, objType string) *pubsub.Publication {
 	var pub *pubsub.Publication
 	switch objType {
 	case baseOsObj:
@@ -531,39 +533,16 @@ func downloaderPublication(ctx *zedagentContext, objType string) *pubsub.Publica
 	return pub
 }
 
-func downloaderSubscription(ctx *zedagentContext, objType string) *pubsub.Subscription {
+func downloaderSubscription(ctx *baseOsMgrContext, objType string) *pubsub.Subscription {
 	var sub *pubsub.Subscription
 	switch objType {
 	case baseOsObj:
 		sub = ctx.subBaseOsDownloadStatus
 	case certObj:
 		sub = ctx.subCertObjDownloadStatus
-	case appImgObj:
-		sub = ctx.subAppImgDownloadStatus
 	default:
 		log.Fatalf("downloaderSubscription: Unknown ObjType %s\n",
 			objType)
 	}
 	return sub
-}
-
-func downloaderGetAll(ctx *zedagentContext) map[string]interface{} {
-	sub1 := downloaderSubscription(ctx, baseOsObj)
-	items1 := sub1.GetAll()
-	sub2 := downloaderSubscription(ctx, certObj)
-	items2 := sub2.GetAll()
-	sub3 := downloaderSubscription(ctx, appImgObj)
-	items3 := sub3.GetAll()
-
-	items := make(map[string]interface{})
-	for k, i := range items1 {
-		items[k] = i
-	}
-	for k, i := range items2 {
-		items[k] = i
-	}
-	for k, i := range items3 {
-		items[k] = i
-	}
-	return items
 }

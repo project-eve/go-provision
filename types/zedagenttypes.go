@@ -51,6 +51,7 @@ type BaseOsStatus struct {
 	BaseOsVersion     string
 	ConfigSha256      string
 	Activated         bool
+	Reboot            bool
 	OsParams          []OsVerParams
 	StorageStatusList []StorageStatus
 	PartitionLabel    string
