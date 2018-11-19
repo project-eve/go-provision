@@ -10,13 +10,15 @@
 // periodic status/metric published to zedCloud
 
 // zedagent handles the following configuration
-//   * app instance config/status  <zedagent>   / <baseos> / <config | status>
+//   * app instance config/status  <zedagent>   / <appimg> / <config | status>
 //   * base os config/status       <zedagent>   / <baseos> / <config | status>
 //   * certs config/status         <zedagent>   / certs>   / <config | status>
 // <base os>
-//   <baseosmgr>  <baseos> <config> --> <baseosmgr>  <baseos> <status>
+//   <zedagent>  <baseos> <config> --> <baseosmgr>  <baseos> <status>
 // <certs>
-//   <baseosmgr>  <certs> <config> --> <baseosmgr>   <certs> <status>
+//   <zedagent>  <certs> <config> --> <baseosmgr>   <certs> <status>
+// <app image>
+//   <zedagent>  <appimage> <config> --> <zedmanager> <appimage> <status>
 
 package zedagent
 

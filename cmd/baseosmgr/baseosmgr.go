@@ -8,23 +8,24 @@
 
 // baswos handles the following orchestration
 //   * base os download config/status <downloader> / <baseos> / <config | status>
-//   * certs download config/status   <downloader> / <certs>  / <config | status>
 //   * base os verifier config/status <verifier>   / <baseos> / <config | status>
+//   * certs download config/status   <downloader> / <certs>  / <config | status>
 // <base os>
 //   <zedagent>   <baseos> <config> --> <baseosmgr>   <baseos> <status>
 //				<download>...       --> <downloader>  <baseos> <config>
 //   <downloader> <baseos> <config> --> <downloader>  <baseos> <status>
 //				<downloaded>...     --> <downloader>  <baseos> <status>
-//								    --> <baseosmgr>   <baseos> <status>
-//								    --> <verifier>    <baseos> <config>
+//	 <downloader> <baseos> <status> --> <baseosmgr>   <baseos> <status>
+//				<verify>    ...     --> <verifier>    <baseos> <config>
+//   <verifier> <baseos> <config>   --> <verifier>    <baseos> <status>
 //				<verified>  ...     --> <verifier>    <baseos> <status>
-//								    --> <baseosmgr>   <baseos> <status>
+//	 <verifier> <baseos> <status>   --> <baseosmgr>   <baseos> <status>
 // <certs>
-//   <zedagent>   <certs> <config> --> <baseosmgr>   <certs> <status>
-//				<download>...      --> <downloader>  <certs> <config>
-//   <downloader> <certs> <config> --> <downloader>  <certs> <status>
-//				<downloaded>...    --> <downloader>  <certs> <status>
-//								   --> <baseosmgr>   <certs> <status>
+//   <zedagent>   <certs> <config>  --> <baseosmgr>   <certs> <status>
+//				<download>...       --> <downloader>  <certs> <config>
+//   <downloader> <certs> <config>  --> <downloader>  <certs> <status>
+//				<downloaded>...     --> <downloader>  <certs> <status>
+//	 <downloader> <baseos> <status> --> <baseosmgr>   <baseos> <status>
 
 package baseosmgr
 
@@ -43,7 +44,6 @@ import (
 )
 
 const (
-	appImgObj = "appImg.obj"
 	baseOsObj = "baseOs.obj"
 	certObj   = "cert.obj"
 	agentName = "baseosmgr"

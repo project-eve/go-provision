@@ -97,15 +97,7 @@ func updateVerifierStatus(ctx *baseOsMgrContext,
 		return
 	}
 
-	switch status.ObjType {
-	case baseOsObj:
-		// break
-	case appImgObj:
-		// We subscribe to get metrics about disk usage
-		log.Debugf("updateVerifierStatus for %s, ignoring objType %s\n",
-			key, objType)
-		return
-	default:
+	if status.ObjType != baseOsObj {
 		log.Errorf("updateVerifierStatus for %s, unsupported objType %s\n",
 			key, objType)
 		return

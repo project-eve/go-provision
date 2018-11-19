@@ -98,11 +98,6 @@ func updateDownloaderStatus(ctx *baseOsMgrContext,
 	switch status.ObjType {
 	case baseOsObj, certObj:
 		// break
-	case appImgObj:
-		// We subscribe to get metrics about disk usage
-		log.Debugf("updateDownloaderStatus for %s, ignoring objType %s\n",
-			key, objType)
-		return
 	default:
 		log.Errorf("updateDownloaderStatus for %s, unsupported objType %s\n",
 			key, objType)
