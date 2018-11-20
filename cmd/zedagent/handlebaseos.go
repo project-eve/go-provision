@@ -27,7 +27,7 @@ func lookupBaseOsStatus(ctx *zedagentContext, key string) *types.BaseOsStatus {
 	return &status
 }
 
-func handleBaseOsReboot (ctx *zedagentContext, status types.BaseOsStatus) {
+func handleBaseOsReboot(ctx *zedagentContext, status types.BaseOsStatus) {
 	// if restart flag is set,
 	// initiate the shutdown process
 	if status.Reboot == true {

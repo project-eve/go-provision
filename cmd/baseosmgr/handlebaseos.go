@@ -294,14 +294,9 @@ func doBaseOsActivate(ctx *baseOsMgrContext, uuidStr string,
 
 	// if it is installed, flip the activated status
 	if status.State == types.INSTALLED || !status.Reboot {
+		// trigger, zedagent to start reboot process
 		status.Reboot = true
 		changed = true
-		// Make sure we tell apps to shut down
-		// XXX:FIXME, REFACTOR we need trigger zedagent
-/*
-		shutdownAppsGlobal(ctx)
-		startExecReboot()
-*/
 	}
 
 	return changed

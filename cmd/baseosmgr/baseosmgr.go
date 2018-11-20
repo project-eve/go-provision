@@ -59,7 +59,7 @@ const (
 var Version = "No version specified"
 
 type baseOsMgrContext struct {
-	verifierRestarted        bool  // Information from handleVerifierRestarted
+	verifierRestarted        bool // Information from handleVerifierRestarted
 	iteration                int
 	TriggerDeviceInfo        bool
 	pubBaseOsStatus          *pubsub.Publication
@@ -294,6 +294,7 @@ func handleBaseOsConfigDelete(ctxArg interface{}, key string,
 	handleBaseOsDelete(ctx, key, status)
 	log.Infof("handleBaseOsConfigDelete(%s) done\n", key)
 }
+
 // base os config event handlers
 // base os config create event
 func handleBaseOsCreate(ctxArg interface{}, key string,
@@ -623,7 +624,7 @@ func handleGlobalConfigModify(ctxArg interface{}, key string,
 		return
 	}
 	debug, _ = agentlog.HandleGlobalConfig(ctx.subGlobalConfig, agentName,
-        debugOverride)
+		debugOverride)
 	log.Infof("handleGlobalConfigModify done for %s\n", key)
 }
 
