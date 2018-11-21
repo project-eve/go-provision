@@ -28,8 +28,6 @@ import (
 )
 
 const (
-	MaxBaseOsCount       = 2
-	BaseOsImageCount     = 1
 	rebootConfigFilename = configDir + "/rebootConfig"
 )
 

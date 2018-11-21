@@ -76,7 +76,6 @@ type DNSContext struct {
 
 type zedagentContext struct {
 	getconfigCtx             *getconfigContext // Cross link
-	verifierRestarted        bool              // Information from handleVerifierRestarted
 	assignableAdapters       *types.AssignableAdapters
 	iteration                int
 	TriggerDeviceInfo        bool
@@ -176,6 +175,7 @@ func Run() {
 	// XXX defer this until we have some config from cloud or saved copy
 	getconfigCtx.pubAppInstanceConfig.SignalRestarted()
 
+	// initialize module specific subscriber handlers
 	initializeGlobalHandles(&zedagentCtx)
 	initializeZedmanagerHandles(&zedagentCtx)
 	initializeDomainManagerHandles(&zedagentCtx)
@@ -249,6 +249,7 @@ func Run() {
 		getconfigCtx.ledManagerCount = 2
 	}
 
+	// initialize module-specific metric handles
 	initializeMetricsHandles(&zedagentCtx)
 
 	// Timer for deferred sends of info messages
@@ -263,33 +264,21 @@ func Run() {
 	metricsTickerHandle := <-handleChannel
 	getconfigCtx.metricsTickerHandle = metricsTickerHandle
 
-	// Process the verifierStatus to avoid downloading an image we
-	// already have in place
-	log.Infof("Handling initial verifier Status\n")
-	for !zedagentCtx.verifierRestarted {
-		select {
-		case change := <-zedagentCtx.subGlobalConfig.C:
-			zedagentCtx.subGlobalConfig.ProcessChange(change)
+	select {
+	case change := <-zedagentCtx.subGlobalConfig.C:
+		zedagentCtx.subGlobalConfig.ProcessChange(change)
 
-		case change := <-zedagentCtx.subBaseOsVerifierStatus.C:
-			zedagentCtx.subBaseOsVerifierStatus.ProcessChange(change)
-			if zedagentCtx.verifierRestarted {
-				log.Infof("Verifier reported restarted\n")
-				break
-			}
+	case change := <-DNSctx.subDeviceNetworkStatus.C:
+		DNSctx.subDeviceNetworkStatus.ProcessChange(change)
 
-		case change := <-DNSctx.subDeviceNetworkStatus.C:
-			DNSctx.subDeviceNetworkStatus.ProcessChange(change)
+	case change := <-subAa.C:
+		subAa.ProcessChange(change)
 
-		case change := <-subAa.C:
-			subAa.ProcessChange(change)
-
-		case <-stillRunning.C:
-			agentlog.StillRunning(agentName)
-		}
+	case <-stillRunning.C:
+		agentlog.StillRunning(agentName)
 	}
 
-	// start the config fetch tasks after we've heard from verifier
+	// start the config fetch task
 	go configTimerTask(handleChannel, &getconfigCtx)
 	configTickerHandle := <-handleChannel
 	// XXX close handleChannels?
@@ -297,6 +286,7 @@ func Run() {
 
 	updateSshAccess(!globalConfig.NoSshAccess, true)
 
+	// main event loop
 	for {
 		select {
 		case change := <-zedagentCtx.subGlobalConfig.C:
@@ -373,6 +363,7 @@ func Run() {
 			} else {
 				downloaderMetrics = m
 			}
+
 		case change := <-deferredChan:
 			zedcloud.HandleDeferred(change)
 

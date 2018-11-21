@@ -31,6 +31,7 @@ func handleBaseOsReboot(ctx *zedagentContext, status types.BaseOsStatus) {
 	// if restart flag is set,
 	// initiate the shutdown process
 	if status.Reboot == true {
+		log.Infof("handleBaseOsReboot for %s", status.Key())
 		shutdownAppsGlobal(ctx)
 		startExecReboot()
 	}

@@ -19,7 +19,6 @@ import (
 const (
 	MaxBaseOsCount       = 2
 	BaseOsImageCount     = 1
-	rebootConfigFilename = configDir + "/rebootConfig"
 )
 
 var immediate int = 30 // take a 30 second delay
