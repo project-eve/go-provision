@@ -3,10 +3,10 @@
 
 // zedAgent interfaces with zedcloud for
 //   * config sync
-//   * metric/info pubish
+//   * metric/info publish
 // app instance config is pushed to zedmanager for orchestration
-// baseos config is pushed to baseosmgr for orchestration
-// event based app instance/device info published to ZedCloud
+// baseos/certs config is pushed to baseosmgr for orchestration
+// event based baseos/app instance/device info published to ZedCloud
 // periodic status/metric published to zedCloud
 
 // zedagent handles the following configuration
@@ -175,7 +175,7 @@ func Run() {
 	// XXX defer this until we have some config from cloud or saved copy
 	getconfigCtx.pubAppInstanceConfig.SignalRestarted()
 
-	// initialize module specific subscriber handlers
+	// initialize module specific subscriber handles
 	initializeGlobalHandles(&zedagentCtx)
 	initializeZedmanagerHandles(&zedagentCtx)
 	initializeDomainManagerHandles(&zedagentCtx)
@@ -215,9 +215,6 @@ func Run() {
 		select {
 		case change := <-zedagentCtx.subGlobalConfig.C:
 			zedagentCtx.subGlobalConfig.ProcessChange(change)
-
-		case change := <-zedagentCtx.subBaseOsVerifierStatus.C:
-			zedagentCtx.subBaseOsVerifierStatus.ProcessChange(change)
 
 		case change := <-DNSctx.subDeviceNetworkStatus.C:
 			DNSctx.subDeviceNetworkStatus.ProcessChange(change)

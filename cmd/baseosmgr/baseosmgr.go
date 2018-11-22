@@ -48,11 +48,9 @@ const (
 	certObj   = "cert.obj"
 	agentName = "baseosmgr"
 
-	configDir             = "/config"
 	persistDir            = "/persist"
 	objectDownloadDirname = persistDir + "/downloads"
 	certificateDirname    = persistDir + "/certs"
-	checkpointDirname     = persistDir + "/checkpoint"
 )
 
 // Set from Makefile
@@ -60,13 +58,12 @@ var Version = "No version specified"
 
 type baseOsMgrContext struct {
 	verifierRestarted        bool // Information from handleVerifierRestarted
-	iteration                int
-	TriggerDeviceInfo        bool
 	pubBaseOsStatus          *pubsub.Publication
 	pubBaseOsDownloadConfig  *pubsub.Publication
 	pubBaseOsVerifierConfig  *pubsub.Publication
 	pubCertObjStatus         *pubsub.Publication
 	pubCertObjDownloadConfig *pubsub.Publication
+
 	subGlobalConfig          *pubsub.Subscription
 	subBaseOsConfig          *pubsub.Subscription
 	subCertObjConfig         *pubsub.Subscription
@@ -108,149 +105,56 @@ func Run() {
 	// Tell ourselves to go ahead
 	// Context to pass around
 
-	baseOsMgrCtx := baseOsMgrContext{}
+	ctx := baseOsMgrContext{}
 
-	pubBaseOsStatus, err := pubsub.Publish(agentName,
-		types.BaseOsStatus{})
-	if err != nil {
-		log.Fatal(err)
-	}
-	pubBaseOsStatus.ClearRestarted()
-	baseOsMgrCtx.pubBaseOsStatus = pubBaseOsStatus
+	// initialize publishing handles
+	initializeSelfPublishHandles(&ctx)
 
-	pubBaseOsDownloadConfig, err := pubsub.PublishScope(agentName,
-		baseOsObj, types.DownloaderConfig{})
-	if err != nil {
-		log.Fatal(err)
-	}
-	pubBaseOsDownloadConfig.ClearRestarted()
-	baseOsMgrCtx.pubBaseOsDownloadConfig = pubBaseOsDownloadConfig
+	// initialize module specific subscriber handles
+	initializeGlobalConfigHandles(&ctx)
+	initializeZedagentHandles(&ctx)
+	initializeVerifierHandles(&ctx)
+	initializeDownloaderHandles(&ctx)
 
-	pubBaseOsVerifierConfig, err := pubsub.PublishScope(agentName,
-		baseOsObj, types.VerifyImageConfig{})
-	if err != nil {
-		log.Fatal(err)
-	}
-	pubBaseOsVerifierConfig.ClearRestarted()
-	baseOsMgrCtx.pubBaseOsVerifierConfig = pubBaseOsVerifierConfig
+	// First we process the verifierStatus to avoid downloading
+	// an image we already have in place.
+	log.Infof("Handling initial verifier Status\n")
+	for !ctx.verifierRestarted {
+		select {
+		case change := <-ctx.subGlobalConfig.C:
+			ctx.subGlobalConfig.ProcessChange(change)
 
-	pubCertObjStatus, err := pubsub.Publish(agentName,
-		types.CertObjStatus{})
-	if err != nil {
-		log.Fatal(err)
+		case change := <-ctx.subBaseOsVerifierStatus.C:
+			ctx.subBaseOsVerifierStatus.ProcessChange(change)
+			if ctx.verifierRestarted {
+				log.Infof("Verifier reported restarted\n")
+			}
+		}
 	}
-	pubCertObjStatus.ClearRestarted()
-	baseOsMgrCtx.pubCertObjStatus = pubCertObjStatus
-
-	pubCertObjDownloadConfig, err := pubsub.PublishScope(agentName,
-		certObj, types.DownloaderConfig{})
-	if err != nil {
-		log.Fatal(err)
-	}
-	pubCertObjDownloadConfig.ClearRestarted()
-	baseOsMgrCtx.pubCertObjDownloadConfig = pubCertObjDownloadConfig
-
-	// Look for global config such as log levels
-	subGlobalConfig, err := pubsub.Subscribe("", types.GlobalConfig{},
-		false, &baseOsMgrCtx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	subGlobalConfig.ModifyHandler = handleGlobalConfigModify
-	subGlobalConfig.DeleteHandler = handleGlobalConfigDelete
-	baseOsMgrCtx.subGlobalConfig = subGlobalConfig
-	subGlobalConfig.Activate()
-
-	// Look for BaseOsConfig , from zedagent
-	subBaseOsConfig, err := pubsub.Subscribe("zedagent",
-		types.BaseOsConfig{}, false, &baseOsMgrCtx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	subBaseOsConfig.ModifyHandler = handleBaseOsConfigModify
-	subBaseOsConfig.DeleteHandler = handleBaseOsConfigDelete
-	baseOsMgrCtx.subBaseOsConfig = subBaseOsConfig
-	subBaseOsConfig.Activate()
-
-	// Look for DatastorConfig, from zedagent
-	subDatastoreConfig, err := pubsub.Subscribe("zedagent",
-		types.DatastoreConfig{}, false, &baseOsMgrCtx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	subDatastoreConfig.ModifyHandler = handleDatastoreConfigModify
-	subDatastoreConfig.DeleteHandler = handleDatastoreConfigDelete
-	baseOsMgrCtx.subDatastoreConfig = subDatastoreConfig
-	subDatastoreConfig.Activate()
-
-	// Look for BaseOs DownloaderStatus from downloader
-	subBaseOsDownloadStatus, err := pubsub.SubscribeScope("downloader",
-		baseOsObj, types.DownloaderStatus{}, false, &baseOsMgrCtx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	subBaseOsDownloadStatus.ModifyHandler = handleDownloadStatusModify
-	subBaseOsDownloadStatus.DeleteHandler = handleDownloadStatusDelete
-	baseOsMgrCtx.subBaseOsDownloadStatus = subBaseOsDownloadStatus
-	subBaseOsDownloadStatus.Activate()
-
-	// Look for VerifyImageStatus from verifier
-	subBaseOsVerifierStatus, err := pubsub.SubscribeScope("verifier",
-		baseOsObj, types.VerifyImageStatus{}, false, &baseOsMgrCtx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	subBaseOsVerifierStatus.ModifyHandler = handleVerifierStatusModify
-	subBaseOsVerifierStatus.DeleteHandler = handleVerifierStatusDelete
-	subBaseOsVerifierStatus.RestartHandler = handleVerifierRestarted
-	baseOsMgrCtx.subBaseOsVerifierStatus = subBaseOsVerifierStatus
-	subBaseOsVerifierStatus.Activate()
-
-	// Look for CertObjConfig, from zedagent
-	subCertObjConfig, err := pubsub.Subscribe("zedagent",
-		types.CertObjConfig{}, false, &baseOsMgrCtx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	subCertObjConfig.ModifyHandler = handleCertObjConfigModify
-	subCertObjConfig.DeleteHandler = handleCertObjConfigDelete
-	baseOsMgrCtx.subCertObjConfig = subCertObjConfig
-	subCertObjConfig.Activate()
-
-	// Look for Certs DownloaderStatus from downloader
-	subCertObjDownloadStatus, err := pubsub.SubscribeScope("downloader",
-		certObj, types.DownloaderStatus{}, false, &baseOsMgrCtx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	subCertObjDownloadStatus.ModifyHandler = handleDownloadStatusModify
-	subCertObjDownloadStatus.DeleteHandler = handleDownloadStatusDelete
-	baseOsMgrCtx.subCertObjDownloadStatus = subCertObjDownloadStatus
-	subCertObjDownloadStatus.Activate()
 
 	// start the forever loop for event handling
 	for {
 		select {
-		case change := <-subGlobalConfig.C:
-			subGlobalConfig.ProcessChange(change)
+		case change := <-ctx.subGlobalConfig.C:
+			ctx.subGlobalConfig.ProcessChange(change)
 
-		case change := <-subCertObjConfig.C:
-			subCertObjConfig.ProcessChange(change)
+		case change := <-ctx.subCertObjConfig.C:
+			ctx.subCertObjConfig.ProcessChange(change)
 
-		case change := <-subBaseOsConfig.C:
-			subBaseOsConfig.ProcessChange(change)
+		case change := <-ctx.subBaseOsConfig.C:
+			ctx.subBaseOsConfig.ProcessChange(change)
 
-		case change := <-subDatastoreConfig.C:
-			subDatastoreConfig.ProcessChange(change)
+		case change := <-ctx.subDatastoreConfig.C:
+			ctx.subDatastoreConfig.ProcessChange(change)
 
-		case change := <-subBaseOsDownloadStatus.C:
-			subBaseOsDownloadStatus.ProcessChange(change)
+		case change := <-ctx.subBaseOsDownloadStatus.C:
+			ctx.subBaseOsDownloadStatus.ProcessChange(change)
 
-		case change := <-subBaseOsVerifierStatus.C:
-			subBaseOsVerifierStatus.ProcessChange(change)
+		case change := <-ctx.subBaseOsVerifierStatus.C:
+			ctx.subBaseOsVerifierStatus.ProcessChange(change)
 
-		case change := <-subCertObjDownloadStatus.C:
-			subCertObjDownloadStatus.ProcessChange(change)
+		case change := <-ctx.subCertObjDownloadStatus.C:
+			ctx.subCertObjDownloadStatus.ProcessChange(change)
 		}
 	}
 }
@@ -641,3 +545,133 @@ func handleGlobalConfigDelete(ctxArg interface{}, key string,
 		debugOverride)
 	log.Infof("handleGlobalConfigDelete done for %s\n", key)
 }
+
+func initializeSelfPublishHandles(ctx *baseOsMgrContext) {
+	pubBaseOsStatus, err := pubsub.Publish(agentName,
+		types.BaseOsStatus{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	pubBaseOsStatus.ClearRestarted()
+	ctx.pubBaseOsStatus = pubBaseOsStatus
+
+	pubBaseOsDownloadConfig, err := pubsub.PublishScope(agentName,
+		baseOsObj, types.DownloaderConfig{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	pubBaseOsDownloadConfig.ClearRestarted()
+	ctx.pubBaseOsDownloadConfig = pubBaseOsDownloadConfig
+
+	pubBaseOsVerifierConfig, err := pubsub.PublishScope(agentName,
+		baseOsObj, types.VerifyImageConfig{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	pubBaseOsVerifierConfig.ClearRestarted()
+	ctx.pubBaseOsVerifierConfig = pubBaseOsVerifierConfig
+
+	pubCertObjStatus, err := pubsub.Publish(agentName,
+		types.CertObjStatus{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	pubCertObjStatus.ClearRestarted()
+	ctx.pubCertObjStatus = pubCertObjStatus
+
+	pubCertObjDownloadConfig, err := pubsub.PublishScope(agentName,
+		certObj, types.DownloaderConfig{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	pubCertObjDownloadConfig.ClearRestarted()
+	ctx.pubCertObjDownloadConfig = pubCertObjDownloadConfig
+}
+
+func initializeGlobalConfigHandles(ctx *baseOsMgrContext) {
+
+	// Look for global config such as log levels
+	subGlobalConfig, err := pubsub.Subscribe("", types.GlobalConfig{},
+		false, ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	subGlobalConfig.ModifyHandler = handleGlobalConfigModify
+	subGlobalConfig.DeleteHandler = handleGlobalConfigDelete
+	ctx.subGlobalConfig = subGlobalConfig
+	subGlobalConfig.Activate()
+}
+
+func initializeZedagentHandles(ctx *baseOsMgrContext) {
+	// Look for BaseOsConfig , from zedagent
+	subBaseOsConfig, err := pubsub.Subscribe("zedagent",
+		types.BaseOsConfig{}, false, ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	subBaseOsConfig.ModifyHandler = handleBaseOsConfigModify
+	subBaseOsConfig.DeleteHandler = handleBaseOsConfigDelete
+	ctx.subBaseOsConfig = subBaseOsConfig
+	subBaseOsConfig.Activate()
+
+	// Look for DatastorConfig, from zedagent
+	subDatastoreConfig, err := pubsub.Subscribe("zedagent",
+		types.DatastoreConfig{}, false, ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	subDatastoreConfig.ModifyHandler = handleDatastoreConfigModify
+	subDatastoreConfig.DeleteHandler = handleDatastoreConfigDelete
+	ctx.subDatastoreConfig = subDatastoreConfig
+	subDatastoreConfig.Activate()
+
+	// Look for CertObjConfig, from zedagent
+	subCertObjConfig, err := pubsub.Subscribe("zedagent",
+		types.CertObjConfig{}, false, ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	subCertObjConfig.ModifyHandler = handleCertObjConfigModify
+	subCertObjConfig.DeleteHandler = handleCertObjConfigDelete
+	ctx.subCertObjConfig = subCertObjConfig
+	subCertObjConfig.Activate()
+}
+
+func initializeDownloaderHandles(ctx *baseOsMgrContext) {
+	// Look for BaseOs DownloaderStatus from downloader
+	subBaseOsDownloadStatus, err := pubsub.SubscribeScope("downloader",
+		baseOsObj, types.DownloaderStatus{}, false, ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	subBaseOsDownloadStatus.ModifyHandler = handleDownloadStatusModify
+	subBaseOsDownloadStatus.DeleteHandler = handleDownloadStatusDelete
+	ctx.subBaseOsDownloadStatus = subBaseOsDownloadStatus
+	subBaseOsDownloadStatus.Activate()
+
+	// Look for Certs DownloaderStatus from downloader
+	subCertObjDownloadStatus, err := pubsub.SubscribeScope("downloader",
+		certObj, types.DownloaderStatus{}, false, ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	subCertObjDownloadStatus.ModifyHandler = handleDownloadStatusModify
+	subCertObjDownloadStatus.DeleteHandler = handleDownloadStatusDelete
+	ctx.subCertObjDownloadStatus = subCertObjDownloadStatus
+	subCertObjDownloadStatus.Activate()
+}
+
+func initializeVerifierHandles(ctx * baseOsMgrContext) {
+	// Look for VerifyImageStatus from verifier
+	subBaseOsVerifierStatus, err := pubsub.SubscribeScope("verifier",
+		baseOsObj, types.VerifyImageStatus{}, false, ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	subBaseOsVerifierStatus.ModifyHandler = handleVerifierStatusModify
+	subBaseOsVerifierStatus.DeleteHandler = handleVerifierStatusDelete
+	subBaseOsVerifierStatus.RestartHandler = handleVerifierRestarted
+	ctx.subBaseOsVerifierStatus = subBaseOsVerifierStatus
+	subBaseOsVerifierStatus.Activate()
+}
+
