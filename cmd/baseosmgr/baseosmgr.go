@@ -116,6 +116,9 @@ func Run() {
 	initializeVerifierHandles(&ctx)
 	initializeDownloaderHandles(&ctx)
 
+	stillRunning := time.NewTicker(25 * time.Second)
+	agentlog.StillRunning(agentName)
+
 	// First we process the verifierStatus to avoid downloading
 	// an image we already have in place.
 	log.Infof("Handling initial verifier Status\n")
@@ -129,6 +132,8 @@ func Run() {
 			if ctx.verifierRestarted {
 				log.Infof("Verifier reported restarted\n")
 			}
+		case <-stillRunning.C:
+			agentlog.StillRunning(agentName)
 		}
 	}
 
@@ -155,6 +160,10 @@ func Run() {
 
 		case change := <-ctx.subCertObjDownloadStatus.C:
 			ctx.subCertObjDownloadStatus.ProcessChange(change)
+
+		case <-stillRunning.C:
+			checkUpdateCurrentPartitionState(&ctx)
+			agentlog.StillRunning(agentName)
 		}
 	}
 }
@@ -659,9 +668,10 @@ func initializeDownloaderHandles(ctx *baseOsMgrContext) {
 	subCertObjDownloadStatus.DeleteHandler = handleDownloadStatusDelete
 	ctx.subCertObjDownloadStatus = subCertObjDownloadStatus
 	subCertObjDownloadStatus.Activate()
+
 }
 
-func initializeVerifierHandles(ctx * baseOsMgrContext) {
+func initializeVerifierHandles(ctx *baseOsMgrContext) {
 	// Look for VerifyImageStatus from verifier
 	subBaseOsVerifierStatus, err := pubsub.SubscribeScope("verifier",
 		baseOsObj, types.VerifyImageStatus{}, false, ctx)
@@ -674,4 +684,3 @@ func initializeVerifierHandles(ctx * baseOsMgrContext) {
 	ctx.subBaseOsVerifierStatus = subBaseOsVerifierStatus
 	subBaseOsVerifierStatus.Activate()
 }
-

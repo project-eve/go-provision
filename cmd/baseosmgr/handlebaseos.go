@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	MaxBaseOsCount       = 2
-	BaseOsImageCount     = 1
+	MaxBaseOsCount   = 2
+	BaseOsImageCount = 1
 )
 
 var immediate int = 30 // take a 30 second delay
@@ -797,4 +797,34 @@ func validateBaseOsConfig(ctx *baseOsMgrContext, config types.BaseOsConfig) erro
 	}
 
 	return nil
+}
+
+// after, zedagent moved the partition state to "active"
+// reflect in the baseos status
+func checkUpdateCurrentPartitionState(ctx *baseOsMgrContext) {
+	items := ctx.subBaseOsConfig.GetAll()
+	for _, c := range items {
+		config := cast.CastBaseOsConfig(c)
+		// baseos is still not activated
+		if !config.Activate {
+			continue
+		}
+		status := lookupBaseOsStatus(ctx, config.Key())
+		if status == nil {
+			continue
+		}
+		partLabel := status.PartitionLabel
+		partState := status.PartitionState
+		if !zboot.IsCurrentPartition(partLabel) ||
+			partState == "active" {
+			continue
+		}
+		// is already installed in current partition
+		//  and still inprogress, update partition state
+		partState = zboot.GetPartitionState(partLabel)
+		if status.PartitionState != partState {
+			log.Infof("current partition(%s) state change \"%s\"", partLabel, partState)
+			baseOsGetActivationStatusAll(ctx)
+		}
+	}
 }
