@@ -981,7 +981,8 @@ func doHttp(ctx *downloaderContext, status *types.DownloaderStatus,
 	}
 	var respChan = make(chan *zedUpload.DronaRequest)
 
-	log.Debugf("syncOp for <%s>, <%s>\n", serverUrl, filename)
+	log.Infof("doHttp syncOp for <%s>, <%s>, <%s>\n", serverUrl, dpath,
+		filename)
 	// create Request
 	// Round up from bytes to Mbytes
 	maxMB := (maxsize + 1024*1024 - 1) / (1024 * 1024)
@@ -1060,7 +1061,7 @@ func doS3(ctx *downloaderContext, status *types.DownloaderStatus,
 
 	var respChan = make(chan *zedUpload.DronaRequest)
 
-	log.Debugf("syncOp for <%s>, <%s>, <%s>\n", dpath, region, filename)
+	log.Infof("doS3 syncOp for <%s>, <%s>, <%s>\n", dpath, region, filename)
 	// create Request
 	// Round up from bytes to Mbytes
 	maxMB := (maxsize + 1024*1024 - 1) / (1024 * 1024)
@@ -1131,7 +1132,8 @@ func doSftp(ctx *downloaderContext, status *types.DownloaderStatus,
 	dEndPoint.WithSrcIpSelection(ipSrc)
 	var respChan = make(chan *zedUpload.DronaRequest)
 
-	log.Debugf("syncOp for <%s>, <%s>\n", dpath, filename)
+	log.Infof("doSftp syncOp for <%s>, <%s>, <%s>\n", serverUrl, dpath,
+		filename)
 	// create Request
 	// Round up from bytes to Mbytes
 	maxMB := (maxsize + 1024*1024 - 1) / (1024 * 1024)
@@ -1281,7 +1283,7 @@ func handleSyncOp(ctx *downloaderContext, key string,
 				return
 			}
 		case zconfig.DsType_DsSFTP.String():
-			serverUrl := strings.TrimSuffix(config.DownloadURL, "/"+config.Dpath+"/"+filename)
+			serverUrl := getServerUrl(config, filename)
 			err = doSftp(ctx, status, syncOp, config.ApiKey,
 				config.Password, serverUrl, config.Dpath,
 				config.Size, ipSrc, filename, locFilename)
@@ -1304,8 +1306,7 @@ func handleSyncOp(ctx *downloaderContext, key string,
 				return
 			}
 		case zconfig.DsType_DsHttp.String(), zconfig.DsType_DsHttps.String(), "":
-			// DownloadURL format : http://<serverURL>/dpath/filename
-			serverUrl := strings.TrimSuffix(config.DownloadURL, "/"+config.Dpath+"/"+filename)
+			serverUrl := getServerUrl(config, filename)
 			err = doHttp(ctx, status, syncOp, serverUrl, config.Dpath,
 				config.Size, ifname, ipSrc, filename, locFilename)
 			if err != nil {
@@ -1331,6 +1332,17 @@ func handleSyncOp(ctx *downloaderContext, key string,
 	log.Errorf("All source IP addresses failed. All errors:%s\n", errStr)
 	handleSyncOpResponse(ctx, config, status, locFilename,
 		key, errStr)
+}
+
+// DownloadURL format : http://<serverURL>/dpath/filename
+func getServerUrl(config types.DownloaderConfig, filename string) string {
+	if config.Dpath != "" {
+		return strings.TrimSuffix(config.DownloadURL,
+			"/"+config.Dpath+"/"+filename)
+	} else {
+		return strings.TrimSuffix(config.DownloadURL,
+			"/"+filename)
+	}
 }
 
 func handleSyncOpResponse(ctx *downloaderContext, config types.DownloaderConfig,
