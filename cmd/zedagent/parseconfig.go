@@ -36,7 +36,7 @@ const (
 	rebootConfigFilename = configDir + "/rebootConfig"
 )
 
-var immediate int = 30 // take a 30 second delay
+var rebootDelay int = 30 // take a 30 second delay
 var rebootTimer *time.Timer
 
 // Returns a rebootFlag
@@ -2006,21 +2006,25 @@ func scheduleReboot(reboot *zconfig.DeviceOpsCmd,
 
 		// start the timer again
 		// XXX:FIXME, need to handle the scheduled time
-		duration := time.Duration(immediate)
+		duration := time.Second * time.Duration(rebootDelay)
 
 		// Defer if inprogress
 		ctx := getconfigCtx.zedagentCtx
 		if isBaseOsCurrentPartitionStateInProgress(ctx) {
+			// Use double the testing delay
+			// XXX better to wait for the inprogress to
+			// be cleared.
 			log.Warnf("Rebooting even though testing inprogress; defer for %v seconds\n",
 				globalConfig.MintimeUpdateSuccess)
-			duration = time.Second *
+			duration = 2 * time.Second *
 				time.Duration(globalConfig.MintimeUpdateSuccess)
 		}
 
-		rebootTimer = time.NewTimer(time.Second * duration)
+		rebootTimer = time.NewTimer(duration)
 
-		log.Infof("Scheduling for reboot %d %d\n",
-			rebootConfig.Counter, reboot.Counter)
+		log.Infof("Scheduling for reboot %d %d %d seconds\n",
+			rebootConfig.Counter, reboot.Counter,
+			duration/time.Second)
 
 		go handleReboot(getconfigCtx)
 		rebootPrevReturn = true
@@ -2054,7 +2058,7 @@ func handleReboot(getconfigCtx *getconfigContext) {
 
 	log.Infof("handleReboot timer handler\n")
 	rebootConfig := &zconfig.DeviceOpsCmd{}
-	var state bool
+	var state bool = true // If no file we reboot and not power off
 
 	<-rebootTimer.C
 
@@ -2072,6 +2076,7 @@ func handleReboot(getconfigCtx *getconfigContext) {
 	execReboot(state)
 }
 
+// Used by doBaseOsDeviceReboot only
 func startExecReboot() {
 
 	log.Infof("startExecReboot: scheduling exec reboot\n")
@@ -2083,12 +2088,15 @@ func startExecReboot() {
 
 	// start the timer again
 	// XXX:FIXME, need to handle the scheduled time
-	duration := time.Duration(immediate)
-	rebootTimer = time.NewTimer(time.Second * duration)
+	duration := time.Second * time.Duration(rebootDelay)
+	rebootTimer = time.NewTimer(duration)
+	log.Infof("startExecReboot: timer %d seconds\n",
+		duration/time.Second)
 
 	go handleExecReboot()
 }
 
+// Used by doBaseOsDeviceReboot only
 func handleExecReboot() {
 
 	<-rebootTimer.C
@@ -2105,16 +2113,16 @@ func execReboot(state bool) {
 	switch state {
 
 	case true:
-		duration := time.Duration(immediate)
-		log.Infof("Rebooting... Starting timer for Duration(secs): %+v\n",
-			duration)
+		duration := time.Second * time.Duration(rebootDelay)
+		log.Infof("Rebooting... Starting timer for Duration(secs): %d\n",
+			duration/time.Second)
 
 		// Start timer to allow applications some time to shudown and for
 		//	disks to sync.
 		// We could explicitly wait for domains to shutdown, but
 		// some (which don't have a shutdown hook like the mirageOs ones) take a
 		// very long time.
-		timer := time.NewTimer(time.Second * duration)
+		timer := time.NewTimer(duration)
 		log.Infof("Timer started. Wait to expire\n")
 		<-timer.C
 		log.Infof("Timer Expired.. Zboot.Reset()\n")
@@ -2122,9 +2130,10 @@ func execReboot(state bool) {
 
 	case false:
 		log.Infof("Powering Off..\n")
-		duration := time.Duration(immediate)
-		timer := time.NewTimer(time.Second * duration)
-		log.Infof("Timer started (duration: %+v). Wait to expire\n", duration)
+		duration := time.Second * time.Duration(rebootDelay)
+		timer := time.NewTimer(duration)
+		log.Infof("Timer started (duration: %d seconds). Wait to expire\n",
+			duration/time.Second)
 		<-timer.C
 		log.Infof("Timer Expired.. do Poweroff\n")
 		poweroffCmd := exec.Command("poweroff")
