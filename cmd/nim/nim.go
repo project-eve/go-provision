@@ -47,6 +47,8 @@ type nimContext struct {
 	debug         bool
 	debugOverride bool // From command line arg
 	useStdout     bool
+	version       bool
+	curpart       string
 }
 
 // Set from Makefile
@@ -55,6 +57,7 @@ var Version = "No version specified"
 func (ctx *nimContext) processArgs() {
 	versionPtr := flag.Bool("v", false, "Print Version of the agent.")
 	debugPtr := flag.Bool("d", false, "Set Debug level")
+	curpartPtr := flag.String("c", "", "Current partition")
 	stdoutPtr := flag.Bool("s", false, "Use stdout")
 	flag.Parse()
 
@@ -66,10 +69,8 @@ func (ctx *nimContext) processArgs() {
 	} else {
 		log.SetLevel(log.InfoLevel)
 	}
-	if *versionPtr {
-		fmt.Printf("%s: %s\n", os.Args[0], Version)
-		os.Exit(0)
-	}
+	ctx.curpart = *curpartPtr
+	ctx.version = *versionPtr
 }
 
 func waitForDeviceNetworkConfigFile() string {
@@ -114,18 +115,22 @@ func Run() {
 	nimCtx.sshAccess = true // Kernel default - no iptables filters
 	nimCtx.globalConfig = &types.GlobalConfigDefaults
 
-	logf, err := agentlog.Init(agentName)
+	nimCtx.processArgs()
+	if nimCtx.version {
+		fmt.Printf("%s: %s\n", os.Args[0], Version)
+		return
+	}
+
+	logf, err := agentlog.Init(agentName, nimCtx.curpart)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer logf.Close()
-
-	nimCtx.processArgs()
-
 	if nimCtx.useStdout {
 		multi := io.MultiWriter(logf, os.Stdout)
 		log.SetOutput(multi)
 	}
+
 	if err := pidfile.CheckAndCreatePidfile(agentName); err != nil {
 		log.Fatal(err)
 	}
@@ -357,11 +362,15 @@ func Run() {
 			if !ok {
 				log.Infof("Network test timer stopped?")
 			} else {
+				start := time.Now()
+				log.Debugf("Starting test of Device connectivity to cloud")
 				ok := tryDeviceConnectivityToCloud(dnc)
 				if ok {
-					log.Infof("Device connectivity to cloud worked at %v", time.Now())
+					log.Debugf("Device connectivity to cloud worked. Took %v",
+						time.Since(start))
 				} else {
-					log.Infof("Device connectivity to cloud failed at %v", time.Now())
+					log.Infof("Device connectivity to cloud failed. Took %v",
+						time.Since(start))
 				}
 			}
 
@@ -369,12 +378,15 @@ func Run() {
 			if !ok {
 				log.Infof("Network testBetterTimer stopped?")
 			} else if dnc.NextDPCIndex == 0 {
-				log.Infof("Network testBetterTimer at zero ignored")
+				log.Debugf("Network testBetterTimer at zero ignored")
 			} else {
+				start := time.Now()
 				log.Infof("Network testBetterTimer at index %d",
 					dnc.NextDPCIndex)
 				devicenetwork.RestartVerify(dnc,
 					"NetworkTestBetterTimer")
+				log.Infof("Network testBetterTimer done at index %d. Took %v",
+					dnc.NextDPCIndex, time.Since(start))
 			}
 
 		case <-stillRunning.C:

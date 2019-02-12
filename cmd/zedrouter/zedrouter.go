@@ -83,14 +83,9 @@ var debug = false
 var debugOverride bool // From command line arg
 
 func Run() {
-	logf, err := agentlog.Init(agentName)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer logf.Close()
-
 	versionPtr := flag.Bool("v", false, "Version")
 	debugPtr := flag.Bool("d", false, "Debug flag")
+	curpartPtr := flag.String("c", "", "Current partition")
 	flag.Parse()
 	debug = *debugPtr
 	debugOverride = debug
@@ -99,10 +94,17 @@ func Run() {
 	} else {
 		log.SetLevel(log.InfoLevel)
 	}
+	curpart := *curpartPtr
 	if *versionPtr {
 		fmt.Printf("%s: %s\n", os.Args[0], Version)
 		return
 	}
+	logf, err := agentlog.Init(agentName, curpart)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer logf.Close()
+
 	if err := pidfile.CheckAndCreatePidfile(agentName); err != nil {
 		log.Fatal(err)
 	}
@@ -431,6 +433,7 @@ func Run() {
 				log.Errorf("getNetworkMetrics failed %s\n", err)
 			}
 			publishNetworkServiceStatusAll(&zedrouterCtx)
+			publishNetworkInstanceMetricsAll(&zedrouterCtx)
 
 		case change := <-subNetworkObjectConfig.C:
 			subNetworkObjectConfig.ProcessChange(change)
@@ -556,7 +559,7 @@ func publishAppNetworkStatus(ctx *zedrouterContext,
 	status *types.AppNetworkStatus) {
 
 	key := status.Key()
-	log.Infof("publishAppNetworkStatus(%s)\n", key)
+	log.Infof("publishAppNetworkStatus(%s-%s)\n", status.DisplayName, key)
 	pub := ctx.pubAppNetworkStatus
 	pub.Publish(key, status)
 }
@@ -1128,8 +1131,8 @@ func handleAppNetworkCreate(ctx *zedrouterContext, key string,
 func doActivate(ctx *zedrouterContext, config types.AppNetworkConfig,
 	status *types.AppNetworkStatus) {
 
-	log.Infof("doActivate(%v) for %s. IsZedmanager:%t\n",
-		config.UUIDandVersion, config.DisplayName, config.IsZedmanager)
+	log.Infof("%s-%s: IsZedmanager:%t\n",
+		config.DisplayName, config.UUIDandVersion, config.IsZedmanager)
 
 	if config.IsZedmanager {
 		doActivateAppInstanceWithMgmtLisp(ctx, config, status)
@@ -1184,7 +1187,7 @@ func appNetworkDoActivateAllUnderlayNetworks(
 	}
 }
 
-// Entrypoint from networkobject to look for a bridge's IPv4 address
+// Get Switch's IPv4 address for the port in NetworkInstance
 func getSwitchIPv4Addr(ctx *zedrouterContext,
 	status *types.NetworkInstanceStatus) (string, error) {
 	// Find any service which is associated with the appLink UUID
