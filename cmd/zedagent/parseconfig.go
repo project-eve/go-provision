@@ -292,7 +292,7 @@ func unpublishDeletedNetworkInstanceConfig(ctx *getconfigContext,
 			continue
 		}
 
-		config := cast.CastNetworkServiceConfig(entry)
+		config := cast.CastNetworkInstanceConfig(entry)
 		log.Infof("unpublishing NetworkInstance %s (Name: %s) \n",
 			key, config.DisplayName)
 		if err := ctx.pubNetworkInstanceConfig.Unpublish(key); err != nil {
@@ -369,11 +369,6 @@ func publishNetworkInstanceConfig(ctx *getconfigContext,
 			networkInstanceConfig.Port = apiConfigEntry.Port.Name
 		}
 		networkInstanceConfig.IpType = types.AddressType(apiConfigEntry.IpType)
-
-		// KALYAN - FIX THIS before final merge. Workaround to not getting ipType
-		if networkInstanceConfig.IpType == 0 {
-			networkInstanceConfig.IpType = types.AddressTypeIPV4
-		}
 
 		parseIpspecForNetworkInstanceConfig(apiConfigEntry.Ip, &networkInstanceConfig)
 
@@ -619,18 +614,22 @@ func parseSystemAdapterConfig(config *zconfig.EdgeDevConfig,
 		port.NtpServer = network.NtpServer
 		port.DnsServers = network.DnsServers
 		// Need to be careful since zedcloud can feed us bad Dhcp type
-		port.Dhcp = types.DT_CLIENT
+		port.Dhcp = network.Dhcp
 		if network.Dhcp == types.DT_STATIC {
 			if port.Gateway.IsUnspecified() || port.AddrSubnet == "" ||
-				port.DomainName == "" || port.DnsServers == nil {
+				port.DnsServers == nil {
 				log.Errorf("parseSystemAdapterConfig: DT_STATIC but missing parameters in %+v; ignored\n",
 					port)
+				// XXX to test with zedcloud sending empty
+				// DnsServers need to comment out this
+				// continue
 				continue
 			}
 		} else {
 			// XXX or ignore SystemAdapter as above?
 			log.Warnf("parseSystemAdapterConfig: ignore unsupported dhcp type %v - using DT_CLIENT\n",
 				network.Dhcp)
+			port.Dhcp = types.DT_CLIENT
 		}
 		// XXX use DnsNameToIpList?
 		if network.Proxy != nil {
@@ -978,33 +977,9 @@ func parseIpspec(ipspec *zconfig.Ipspec, config *types.NetworkObjectConfig) erro
 	return nil
 }
 
-func setDefaultIpSpecForNetworkInstanceConfig(
-	config *types.NetworkInstanceConfig) {
-	// HACK.. KALYAN - REMOVE THIS..
-	// We should just return an error here. This is supposed to be
-	// filled up by the cloud.
-	_, subnet, _ := net.ParseCIDR("10.1.0.0/16")
-	config.Subnet = *subnet
-	config.Gateway = net.ParseIP("10.1.0.1")
-	config.DomainName = ""
-	config.NtpServer = net.ParseIP("0.0.0.0")
-	config.DnsServers = make([]net.IP, 1)
-	config.DnsServers[0] = config.Gateway
-	config.DhcpRange.Start = net.ParseIP("10.1.0.2")
-	config.DhcpRange.End = net.ParseIP("10.1.255.254")
-	return
-}
-
 func parseIpspecForNetworkInstanceConfig(ipspec *zconfig.Ipspec,
 	config *types.NetworkInstanceConfig) error {
 
-	if ipspec == nil {
-		log.Infof("ipspec not specified in config")
-		// Kalyan - Hack - Workaround till cloud is ready..
-		// .. Should not need this.. Should return an error
-		setDefaultIpSpecForNetworkInstanceConfig(config)
-		return nil
-	}
 	config.DomainName = ipspec.GetDomain()
 	// Parse Subnet
 	if s := ipspec.GetSubnet(); s != "" {
@@ -2127,7 +2102,7 @@ func execReboot(state bool) {
 			duration/time.Second)
 
 		// Start timer to allow applications some time to shudown and for
-		//	disks to sync.
+		//      disks to sync.
 		// We could explicitly wait for domains to shutdown, but
 		// some (which don't have a shutdown hook like the mirageOs ones) take a
 		// very long time.
