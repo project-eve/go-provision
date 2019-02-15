@@ -6,13 +6,14 @@ package zedmanager
 import (
 	"errors"
 	"fmt"
+	"time"
+
 	"github.com/satori/go.uuid"
 	log "github.com/sirupsen/logrus"
 	"github.com/zededa/go-provision/cast"
 	"github.com/zededa/go-provision/pubsub"
 	"github.com/zededa/go-provision/types"
 	"github.com/zededa/go-provision/uuidtonum"
-	"time"
 )
 
 // Find all the config which refer to this safename.
@@ -80,6 +81,9 @@ func removeAIStatusUUID(ctx *zedmanagerContext, uuidStr string) {
 }
 
 func removeAIStatus(ctx *zedmanagerContext, status *types.AppInstanceStatus) {
+	log.Infof("removeAIStatus(%s): PurgeInProgress:%d\n",
+		status.DisplayName, status.PurgeInprogress)
+
 	uuidStr := status.Key()
 	uninstall := (status.PurgeInprogress != types.BRING_DOWN)
 	changed, done := doRemove(ctx, uuidStr, status, uninstall)
@@ -988,6 +992,7 @@ func doInactivate(ctx *zedmanagerContext, uuidStr string,
 	ds := lookupDomainStatus(ctx, uuidStr)
 	if ds != nil {
 		if status.DomainName != ds.DomainName {
+			// XXX - Why are we doing this?? here, while removing the Application?
 			status.DomainName = ds.DomainName
 			changed = true
 		}
@@ -1011,14 +1016,18 @@ func doInactivate(ctx *zedmanagerContext, uuidStr string,
 			}
 		}
 		return changed
+	} else {
+		log.Infof("Domain status not found")
 	}
 
 	log.Infof("Done with DomainStatus removal for %s\n", uuidStr)
 
 	uninstall := (status.PurgeInprogress != types.BRING_DOWN)
 	if uninstall {
+		log.Infof("UnInstall. Unpublish AppNetworkConfig\n")
 		unpublishAppNetworkConfig(ctx, uuidStr)
 	} else {
+		log.Infof("UnInstall = false. Inactivate AppNetworkConfig.\n")
 		m := lookupAppNetworkConfig(ctx, status.Key())
 		if m != nil {
 			log.Infof("doInactivate: Clearing Activate for AppNetworkConfig for %s\n",

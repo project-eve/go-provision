@@ -636,6 +636,7 @@ func handleDelete(ctx *zedmanagerContext, key string,
 
 	removeAIStatus(ctx, status)
 	// Remove the recorded PurgeCmd Counter
+	log.Infof("Release UuidToNumber\n")
 	uuidtonum.UuidToNumDelete(ctx.pubUuidToNum, status.UUIDandVersion.UUID)
 	log.Infof("handleDelete done for %s\n", status.DisplayName)
 }
