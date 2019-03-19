@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/eriknordmark/ipinfo"
-	"github.com/eriknordmark/netlink"
 	log "github.com/sirupsen/logrus"
 	"github.com/zededa/go-provision/types"
 	"github.com/zededa/go-provision/zedcloud"
@@ -53,8 +52,8 @@ func IsProxyConfigEmpty(proxyConfig types.ProxyConfig) bool {
 }
 
 // Check if device can talk to outside world via atleast one of the free uplinks
-func VerifyDeviceNetworkStatus(
-	status types.DeviceNetworkStatus, retryCount int) bool {
+func VerifyDeviceNetworkStatus(status types.DeviceNetworkStatus,
+	retryCount int) error {
 
 	log.Infof("VerifyDeviceNetworkStatus() %d\n", retryCount)
 
@@ -81,39 +80,42 @@ func VerifyDeviceNetworkStatus(
 		onboardingCert, err := tls.LoadX509KeyPair(onboardingCertName,
 			onboardingKeyName)
 		if err != nil {
-			log.Infof("VerifyDeviceNetworkStatus: Onboarding certificate cannot be found")
-			return false
+			errStr := "Onboarding certificate cannot be found"
+			log.Infof("VerifyDeviceNetworkStatus: %s\n", errStr)
+			return errors.New(errStr)
 		}
 		clientCert := &onboardingCert
 		tlsConfig, err = zedcloud.GetTlsConfig(serverName, clientCert)
 		if err != nil {
-			log.Infof("VerifyDeviceNetworkStatus: " +
-				"Tls configuration for talking to Zedcloud cannot be found")
-			return false
+			errStr := "TLS configuration for talking to Zedcloud cannot be found"
+
+			log.Infof("VerifyDeviceNetworkStatus: %s\n", errStr)
+			return errors.New(errStr)
 		}
 	}
 	zedcloudCtx.TlsConfig = tlsConfig
 	for ix, _ := range status.Ports {
-		err = CheckAndGetNetworkProxy(&status,
-			&status.Ports[ix])
+		err = CheckAndGetNetworkProxy(&status, &status.Ports[ix])
 		if err != nil {
-			errStr := fmt.Sprintf("VerifyDeviceNetworkStatus GetNetworkProxy failed %s", err)
-			log.Errorln(errStr)
-			return false
+			errStr := fmt.Sprintf("GetNetworkProxy failed %s", err)
+			log.Errorf("VerifyDeviceNetworkStatus: %s\n", errStr)
+			return errors.New(errStr)
 		}
 	}
 	cloudReachable, err := zedcloud.VerifyAllIntf(zedcloudCtx, testUrl, retryCount, 1)
 	if err != nil {
-		log.Infof("VerifyDeviceNetworkStatus failed %s\n", err)
-		return false
+		log.Errorf("VerifyDeviceNetworkStatus: VerifyAllIntf failed %s\n",
+			err)
+		return err
 	}
 
 	if cloudReachable {
 		log.Infof("Uplink test SUCCESS to URL: %s", testUrl)
-		return true
+		return nil
 	}
-	log.Infof("Uplink test FAIL to URL: %s", testUrl)
-	return false
+	errStr := fmt.Sprintf("Uplink test FAIL to URL: %s", testUrl)
+	log.Errorf("VerifyDeviceNetworkStatus: %s\n", errStr)
+	return errors.New(errStr)
 }
 
 // Calculate local IP addresses to make a types.DeviceNetworkStatus
@@ -121,6 +123,7 @@ func MakeDeviceNetworkStatus(globalConfig types.DevicePortConfig, oldStatus type
 	var globalStatus types.DeviceNetworkStatus
 	var err error = nil
 
+	log.Infof("MakeDeviceNetworkStatus()\n")
 	globalStatus.Version = globalConfig.Version
 	globalStatus.Ports = make([]types.NetworkPortStatus,
 		len(globalConfig.Ports))
@@ -140,34 +143,30 @@ func MakeDeviceNetworkStatus(globalConfig types.DevicePortConfig, oldStatus type
 		globalStatus.Ports[ix].DomainName = u.DomainName
 		globalStatus.Ports[ix].NtpServer = u.NtpServer
 		globalStatus.Ports[ix].DnsServers = u.DnsServers
-		link, err := netlink.LinkByName(u.IfName)
+		ifindex, err := IfnameToIndex(u.IfName)
 		if err != nil {
-			log.Warnf("MakeDeviceNetworkStatus LinkByName %s: %s\n",
-				u.IfName, err)
-			err = errors.New(fmt.Sprintf("Port in config/global does not exist: %v",
-				u))
+			errStr := fmt.Sprintf("Port %s does not exist - ignored",
+				u.IfName)
+			log.Errorf("MakeDeviceNetworkStatus: %s\n", errStr)
+			err = errors.New(errStr)
 			continue
 		}
-		addrs4, err := netlink.AddrList(link, netlink.FAMILY_V4)
+		addrs, err := IfindexToAddrs(ifindex)
 		if err != nil {
-			addrs4 = nil
-		}
-		addrs6, err := netlink.AddrList(link, netlink.FAMILY_V6)
-		if err != nil {
-			addrs6 = nil
+			log.Warnf("MakeDeviceNetworkStatus addrs not found %s index %d: %s\n",
+				u.IfName, ifindex, err)
+			addrs = nil
 		}
 		globalStatus.Ports[ix].AddrInfoList = make([]types.AddrInfo,
-			len(addrs4)+len(addrs6))
-		for i, addr := range addrs4 {
-			log.Infof("PortAddrs(%s) found IPv4 %v\n",
-				u.IfName, addr.IP)
+			len(addrs))
+		for i, addr := range addrs {
+			v := "IPv4"
+			if addr.IP.To4() == nil {
+				v = "IPv6"
+			}
+			log.Infof("PortAddrs(%s) found %s %v\n",
+				u.IfName, v, addr.IP)
 			globalStatus.Ports[ix].AddrInfoList[i].Addr = addr.IP
-		}
-		for i, addr := range addrs6 {
-			// We include link-locals since they can be used for LISP behind nats
-			log.Infof("PortAddrs(%s) found IPv6 %v\n",
-				u.IfName, addr.IP)
-			globalStatus.Ports[ix].AddrInfoList[i+len(addrs4)].Addr = addr.IP
 		}
 		// Get DNS etc info from dhcpcd. Updates DomainName and DnsServers
 		err = GetDhcpInfo(&globalStatus.Ports[ix])
@@ -206,6 +205,7 @@ func MakeDeviceNetworkStatus(globalConfig types.DevicePortConfig, oldStatus type
 	}
 	// Immediate check
 	UpdateDeviceNetworkGeo(time.Second, &globalStatus)
+	log.Infof("MakeDeviceNetworkStatus() DONE\n")
 	return globalStatus, err
 }
 

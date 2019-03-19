@@ -101,6 +101,8 @@ type zedagentContext struct {
 	rebootCmdDeferred         bool
 	rebootReason              string
 	rebootTime                time.Time
+	subDevicePortConfigList   *pubsub.Subscription
+	devicePortConfigList      types.DevicePortConfigList
 }
 
 var debug = false
@@ -189,6 +191,14 @@ func Run() {
 	if zedagentCtx.rebootReason == "" {
 		zedagentCtx.rebootReason = commonRebootReason
 		zedagentCtx.rebootTime = commonRebootTime
+	}
+	if zedagentCtx.rebootReason == "" {
+		dateStr := time.Now().Format(time.RFC3339Nano)
+		reason := fmt.Sprintf("Unknown reboot reason - power failure or crash - at %s\n",
+			dateStr)
+		log.Warnf(reason)
+		zedagentCtx.rebootReason = reason
+		zedagentCtx.rebootTime = time.Now()
 	}
 
 	// Run a periodic timer so we always update StillRunning
@@ -457,6 +467,16 @@ func Run() {
 	DNSctx.subDeviceNetworkStatus = subDeviceNetworkStatus
 	subDeviceNetworkStatus.Activate()
 
+	subDevicePortConfigList, err := pubsub.Subscribe("nim",
+		types.DevicePortConfigList{}, false, &zedagentCtx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	subDevicePortConfigList.ModifyHandler = handleDPCLModify
+	subDevicePortConfigList.DeleteHandler = handleDPCLDelete
+	zedagentCtx.subDevicePortConfigList = subDevicePortConfigList
+	subDevicePortConfigList.Activate()
+
 	// Read the GlobalConfig first
 	// Wait for initial GlobalConfig
 	for !zedagentCtx.GCInitialized {
@@ -501,14 +521,12 @@ func Run() {
 	updateInprogress := isBaseOsCurrentPartitionStateInProgress(&zedagentCtx)
 	log.Infof("Current partition inProgress state is %v\n", updateInprogress)
 	log.Infof("Waiting until we have some uplinks with usable addresses\n")
-	waited := false
 	for !DNSctx.DNSinitialized ||
 		!zedagentCtx.assignableAdapters.Initialized {
 
 		log.Infof("Waiting for DomainNetworkStatus %v and aa %v\n",
 			DNSctx.DNSinitialized,
 			zedagentCtx.assignableAdapters.Initialized)
-		waited = true
 
 		select {
 		case change := <-subGlobalConfig.C:
@@ -522,6 +540,9 @@ func Run() {
 
 		case change := <-subAssignableAdapters.C:
 			subAssignableAdapters.ProcessChange(change)
+
+		case change := <-subDevicePortConfigList.C:
+			subDevicePortConfigList.ProcessChange(change)
 
 		case change := <-deferredChan:
 			zedcloud.HandleDeferred(change, 100*time.Millisecond)
@@ -546,11 +567,6 @@ func Run() {
 	}
 	t1.Stop()
 	t2.Stop()
-	if waited && DNSctx.usableAddressCount != 0 {
-		// Inform ledmanager that we have management port addresses
-		types.UpdateLedManagerConfig(2)
-		getconfigCtx.ledManagerCount = 2
-	}
 
 	// Subscribe to network metrics from zedrouter
 	subNetworkMetrics, err := pubsub.Subscribe("zedrouter",
@@ -602,9 +618,24 @@ func Run() {
 
 		case change := <-subDeviceNetworkStatus.C:
 			subDeviceNetworkStatus.ProcessChange(change)
+			if DNSctx.triggerDeviceInfo {
+				// IP/DNS in device info could have changed
+				log.Infof("NetworkStatus triggered PublishDeviceInfo\n")
+				publishDevInfo(&zedagentCtx)
+				DNSctx.triggerDeviceInfo = false
+			}
 
 		case change := <-subAssignableAdapters.C:
 			subAssignableAdapters.ProcessChange(change)
+
+		case change := <-subDevicePortConfigList.C:
+			subDevicePortConfigList.ProcessChange(change)
+			if zedagentCtx.TriggerDeviceInfo {
+				// CurrentIndex, LastError could have changed
+				log.Infof("DevicePortConfigList triggered PublishDeviceInfo\n")
+				publishDevInfo(&zedagentCtx)
+				zedagentCtx.TriggerDeviceInfo = false
+			}
 
 		case change := <-deferredChan:
 			zedcloud.HandleDeferred(change, 100*time.Millisecond)
@@ -713,6 +744,15 @@ func Run() {
 
 		case change := <-subNetworkInstanceMetrics.C:
 			subNetworkInstanceMetrics.ProcessChange(change)
+
+		case change := <-subDevicePortConfigList.C:
+			subDevicePortConfigList.ProcessChange(change)
+			if zedagentCtx.TriggerDeviceInfo {
+				// CurrentIndex, LastError could have changed
+				log.Infof("DevicePortConfigList triggered PublishDeviceInfo\n")
+				publishDevInfo(&zedagentCtx)
+				zedagentCtx.TriggerDeviceInfo = false
+			}
 
 		case <-stillRunning.C:
 			agentlog.StillRunning(agentName)
@@ -853,7 +893,12 @@ func handleDNSModify(ctxArg interface{}, key string, statusArg interface{}) {
 		return
 	}
 	log.Infof("handleDNSModify for %s\n", key)
+	if status.Testing {
+		log.Infof("handleDNSModify ignoring Testing\n")
+		return
+	}
 	if cmp.Equal(*deviceNetworkStatus, status) {
+		log.Infof("handleDNSModify no change\n")
 		return
 	}
 	log.Infof("handleDNSModify: changed %v",
@@ -888,6 +933,38 @@ func handleDNSDelete(ctxArg interface{}, key string,
 	ctx.DNSinitialized = false
 	ctx.usableAddressCount = newAddrCount
 	log.Infof("handleDNSDelete done for %s\n", key)
+}
+
+func handleDPCLModify(ctxArg interface{}, key string, statusArg interface{}) {
+
+	status := cast.CastDevicePortConfigList(statusArg)
+	ctx := ctxArg.(*zedagentContext)
+	if key != "global" {
+		log.Infof("handleDPCLModify: ignoring %s\n", key)
+		return
+	}
+	if cmp.Equal(ctx.devicePortConfigList, status) {
+		log.Infof("handleDPCLModify no change\n")
+		return
+	}
+	// Note that lastSucceeded will increment a lot; ignore it but compare
+	// lastFailed/lastError?? XXX how?
+	log.Infof("handleDPCLModify: changed %v",
+		cmp.Diff(ctx.devicePortConfigList, status))
+	ctx.devicePortConfigList = status
+	ctx.TriggerDeviceInfo = true
+}
+
+func handleDPCLDelete(ctxArg interface{}, key string, statusArg interface{}) {
+
+	ctx := ctxArg.(*zedagentContext)
+	if key != "global" {
+		log.Infof("handleDPCLDelete: ignoring %s\n", key)
+		return
+	}
+	log.Infof("handleDPCLDelete for %s\n", key)
+	ctx.devicePortConfigList = types.DevicePortConfigList{}
+	ctx.TriggerDeviceInfo = true
 }
 
 // base os status event handlers

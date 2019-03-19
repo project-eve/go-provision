@@ -156,6 +156,7 @@ type DevicePortConfig struct {
 	// All zeros means never tested.
 	LastFailed    time.Time
 	LastSucceeded time.Time
+	LastError     string // Set when LastFailed is updated
 
 	Ports []NetworkPortConfig
 }
@@ -257,7 +258,7 @@ type ProxyConfig struct {
 }
 
 type DhcpConfig struct {
-	Dhcp       DhcpType // If DT_STATIC use below; if DT_NOOP do nothing
+	Dhcp       DhcpType // If DT_STATIC use below; if DT_NONE do nothing
 	AddrSubnet string   // In CIDR e.g., 192.168.1.44/24
 	Gateway    net.IP
 	DomainName string
@@ -295,6 +296,7 @@ type AddrInfo struct {
 // Published to microservices which needs to know about ports and IP addresses
 type DeviceNetworkStatus struct {
 	Version DevicePortConfigVersion // From DevicePortConfig
+	Testing bool                    // Ignore since it is not yet verified
 	Ports   []NetworkPortStatus
 }
 
@@ -723,6 +725,17 @@ type LispConfig struct {
 	Experimental bool
 }
 
+type NetworkInstanceLispConfig struct {
+	MapServers    []MapServer
+	IID           uint32
+	Allocate      bool
+	ExportPrivate bool
+	EidPrefix     net.IP
+	EidPrefixLen  uint32
+
+	Experimental bool
+}
+
 type OverlayNetworkConfig struct {
 	Name          string // From proto message
 	EID           net.IP // Always EIDv6
@@ -771,11 +784,11 @@ type OverlayNetworkStatus struct {
 type DhcpType uint8
 
 const (
-	DT_NOOP        DhcpType = iota
-	DT_STATIC               // Device static config
-	DT_PASSTHROUGH          // App passthrough e.g., to a bridge
-	DT_SERVER               // Local server for app network
-	DT_CLIENT               // Device client on external port
+	DT_NOOP       DhcpType = iota
+	DT_STATIC              // Device static config
+	DT_NONE                // App passthrough e.g., to a bridge
+	DT_Deprecated          // XXX to match .proto value
+	DT_CLIENT              // Device client on external port
 )
 
 type UnderlayNetworkConfig struct {
@@ -834,7 +847,7 @@ const (
 type NetworkObjectConfig struct {
 	UUID            uuid.UUID
 	Type            NetworkType
-	Dhcp            DhcpType // If DT_STATIC or DT_SERVER use below
+	Dhcp            DhcpType // If DT_STATIC or DT_CLIENT use below
 	Subnet          net.IPNet
 	Gateway         net.IP
 	DomainName      string
@@ -1126,8 +1139,10 @@ type NetworkInstanceConfig struct {
 	DhcpRange       IpRange
 	DnsNameToIPList []DnsNameToIP // Used for DNS and ACL ipset
 
+	HasEncap bool // Lisp/Vpn, for adjusting pMTU
 	// For other network services - Proxy / Lisp /StrongSwan etc..
 	OpaqueConfig string
+	LispConfig   NetworkInstanceLispConfig
 }
 
 func (config *NetworkInstanceConfig) Key() string {
@@ -1168,7 +1183,7 @@ type NetworkInstanceStatus struct {
 	NetworkInstanceInfo
 
 	OpaqueStatus string
-	LispStatus   LispConfig
+	LispStatus   NetworkInstanceLispConfig
 
 	VpnStatus      *ServiceVpnStatus
 	LispInfoStatus *LispInfoStatus
@@ -1533,6 +1548,7 @@ type VpnConnMetrics struct {
 	Name      string // connection name
 	EstTime   uint64 // established time
 	Type      NetworkServiceType
+	NIType    NetworkInstanceType
 	LEndPoint VpnEndPointMetrics
 	REndPoint VpnEndPointMetrics
 }

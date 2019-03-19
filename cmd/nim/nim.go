@@ -19,6 +19,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	log "github.com/sirupsen/logrus"
 	"github.com/zededa/go-provision/agentlog"
+	"github.com/zededa/go-provision/cast"
 	"github.com/zededa/go-provision/devicenetwork"
 	"github.com/zededa/go-provision/flextimer"
 	"github.com/zededa/go-provision/hardware"
@@ -178,7 +179,14 @@ func Run() {
 	nimCtx.ManufacturerModel = model
 	nimCtx.DeviceNetworkConfig = &types.DeviceNetworkConfig{}
 	nimCtx.DevicePortConfig = &types.DevicePortConfig{}
-	nimCtx.DevicePortConfigList = &types.DevicePortConfigList{}
+	item, _ := pubDevicePortConfigList.Get("global")
+	if item != nil {
+		dpcl := cast.CastDevicePortConfigList(item)
+		nimCtx.DevicePortConfigList = &dpcl
+		log.Infof("Initial DPCL %+v\n", nimCtx.DevicePortConfigList)
+	} else {
+		nimCtx.DevicePortConfigList = &types.DevicePortConfigList{}
+	}
 	nimCtx.DeviceNetworkStatus = &types.DeviceNetworkStatus{}
 	nimCtx.PubDevicePortConfig = pubDevicePortConfig
 	nimCtx.PubDevicePortConfigList = pubDevicePortConfigList
@@ -308,12 +316,9 @@ func Run() {
 		dnc.NetworkTestBetterTimer = networkTestBetterTimer
 	}
 
-	// Look for address changes
+	// Look for address and link changes
 	addrChanges := devicenetwork.AddrChangeInit(&nimCtx.DeviceNetworkContext)
-
-	// The handlers call UpdateLedManagerConfig with 2 and 1 as the
-	// number of usable IP addresses increases from zero and drops
-	// back to zero, respectively.
+	linkChanges := devicenetwork.LinkChangeInit(&nimCtx.DeviceNetworkContext)
 
 	// To avoid a race between domainmgr starting and moving this to pciback
 	// and zedagent publishing its DevicePortConfig using those assigned-away
@@ -341,10 +346,14 @@ func Run() {
 			if !ok {
 				log.Fatalf("addrChanges closed?\n")
 			}
-			if nimCtx.debug {
-				log.Debugf("addrChanges %+v\n", change)
-			}
 			devicenetwork.AddrChange(&nimCtx.DeviceNetworkContext,
+				change)
+
+		case change, ok := <-linkChanges:
+			if !ok {
+				log.Fatalf("linkChanges closed?\n")
+			}
+			devicenetwork.LinkChange(&nimCtx.DeviceNetworkContext,
 				change)
 
 		case <-geoTimer.C:
@@ -424,10 +433,14 @@ func Run() {
 			if !ok {
 				log.Fatalf("addrChanges closed?\n")
 			}
-			if nimCtx.debug {
-				log.Debugf("addrChanges %+v\n", change)
-			}
 			devicenetwork.AddrChange(&nimCtx.DeviceNetworkContext,
+				change)
+
+		case change, ok := <-linkChanges:
+			if !ok {
+				log.Fatalf("linkChanges closed?\n")
+			}
+			devicenetwork.LinkChange(&nimCtx.DeviceNetworkContext,
 				change)
 
 		case <-geoTimer.C:
@@ -484,8 +497,8 @@ func Run() {
 }
 
 func tryDeviceConnectivityToCloud(ctx *devicenetwork.DeviceNetworkContext) bool {
-	pass := devicenetwork.VerifyDeviceNetworkStatus(*ctx.DeviceNetworkStatus, 1)
-	if pass {
+	err := devicenetwork.VerifyDeviceNetworkStatus(*ctx.DeviceNetworkStatus, 1)
+	if err == nil {
 		log.Infof("tryDeviceConnectivityToCloud: Device cloud connectivity test passed.")
 		if ctx.NextDPCIndex < len(ctx.DevicePortConfigList.PortConfigList) {
 			cur := ctx.DevicePortConfigList.PortConfigList[ctx.NextDPCIndex]
@@ -508,8 +521,9 @@ func tryDeviceConnectivityToCloud(ctx *devicenetwork.DeviceNetworkContext) bool 
 			// Connectivity to cloud is already being figured out.
 			// We wait till the next cloud connectivity test slot.
 		} else {
-			log.Infof("tryDeviceConnectivityToCloud: Triggering Device port " +
-				"verification to resume cloud connectivity")
+			log.Infof("tryDeviceConnectivityToCloud: Triggering Device port "+
+				"verification to resume cloud connectivity after %s",
+				err)
 			// Start DPC verification to find a working configuration
 			devicenetwork.RestartVerify(ctx, "tryDeviceConnectivityToCloud")
 		}
@@ -524,6 +538,7 @@ func tryDeviceConnectivityToCloud(ctx *devicenetwork.DeviceNetworkContext) bool 
 func publishDeviceNetworkStatus(ctx *nimContext) {
 	log.Infof("PublishDeviceNetworkStatus: %+v\n",
 		ctx.DeviceNetworkStatus)
+	ctx.DeviceNetworkStatus.Testing = false
 	ctx.PubDeviceNetworkStatus.Publish("global", ctx.DeviceNetworkStatus)
 }
 
