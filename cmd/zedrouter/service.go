@@ -745,8 +745,8 @@ func bridgeActivate(ctx *zedrouterContext, config types.NetworkServiceConfig,
 	netstatus *types.NetworkObjectStatus) error {
 
 	log.Infof("bridgeActivate(%s)\n", status.DisplayName)
-	// For now we only support passthrough
-	if netstatus.Dhcp != types.DT_PASSTHROUGH {
+	// For now we only support DT_NONE i.e., no IP address om bridge
+	if netstatus.Dhcp != types.DT_NONE {
 		errStr := fmt.Sprintf("Unsupported DHCP type %d for bridge service for %s",
 			netstatus.Dhcp, status.Key())
 		return errors.New(errStr)
@@ -868,6 +868,9 @@ func adapterToIfNames(ctx *zedrouterContext, adapter string) []string {
 		return types.GetMgmtPortsFree(*ctx.deviceNetworkStatus, 0)
 	}
 	ifname := types.AdapterToIfName(ctx.deviceNetworkStatus, adapter)
+	if len(ifname) == 0 {
+		return []string{}
+	}
 	return []string{ifname}
 }
 

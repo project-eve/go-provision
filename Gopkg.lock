@@ -92,7 +92,7 @@
   branch = "master"
   name = "github.com/eriknordmark/ipinfo"
   packages = ["."]
-  revision = "b148f0155466cd0944ae7057fc0acca0c7eb1229"
+  revision = "7ee0839158f952c1487a0112dc6a190ef6c5cb20"
 
 [[projects]]
   branch = "master"
@@ -146,10 +146,10 @@
   version = "v0.2.0"
 
 [[projects]]
-  branch = "master"
-  name = "github.com/jcelliott/lumber"
+  name = "github.com/gorilla/websocket"
   packages = ["."]
-  revision = "dd349441af25132d146d7095c6693a15431fc9b1"
+  revision = "66b9c49e59c6c48f0ffce28c2d8b8a5678502c6d"
+  version = "v1.4.0"
 
 [[projects]]
   name = "github.com/jmespath/go-jmespath"
@@ -167,12 +167,6 @@
   packages = ["."]
   revision = "1455def202f6e05b95cc7bfc7e8ae67ae5141eba"
   version = "v0.1.0"
-
-[[projects]]
-  branch = "master"
-  name = "github.com/nanobox-io/golang-scribble"
-  packages = ["."]
-  revision = "336beac0a992ed9abaf4ef8e7042ba7fe3335c06"
 
 [[projects]]
   name = "github.com/pkg/errors"
@@ -214,6 +208,12 @@
 
 [[projects]]
   branch = "master"
+  name = "github.com/shirou/w32"
+  packages = ["."]
+  revision = "bb4de0191aa41b5507caa14b0650cdbddcd9280b"
+
+[[projects]]
+  branch = "master"
   name = "github.com/sirupsen/logrus"
   packages = ["."]
   revision = "659e47340eafb203ad3c2ce461023fde46356615"
@@ -221,7 +221,10 @@
 [[projects]]
   branch = "master"
   name = "github.com/vishvananda/netlink"
-  packages = ["nl"]
+  packages = [
+    ".",
+    "nl"
+  ]
   revision = "1e2e7ab670e05e2fd29bf5d0bcab2f9907e9f9f4"
 
 [[projects]]
@@ -237,7 +240,7 @@
     "zconfig",
     "zmet"
   ]
-  revision = "448b07181b059e47b20c5e58bb0d646c11b3eee7"
+  revision = "70e8d6ef3d0a02758d981b838987cb859e6192ef"
 
 [[projects]]
   branch = "master"
@@ -249,7 +252,7 @@
     "libs/zedUpload/httputil",
     "libs/zedUpload/sftputil"
   ]
-  revision = "dedf52683f00593edc5b85c7dd191098b9284254"
+  revision = "7ca37267f1b315b134ad98410d5739a002b2b83d"
 
 [[projects]]
   name = "go.opencensus.io"
@@ -394,6 +397,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "6375acba030a95b915e0e46b9eeb0c64f4e183a77b5cfaf32cbf42949dc3746c"
+  inputs-digest = "abe6ffff3609f5fbbfa1541be1bc81a2dafe1a6a1cce4005ed71f984cfe501f2"
   solver-name = "gps-cdcl"
   solver-version = 1

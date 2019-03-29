@@ -6,6 +6,7 @@
 package zboot
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -39,17 +41,60 @@ func init() {
 
 // reset routine
 func Reset() {
+	log.Infof("Reset..\n")
 	if !IsAvailable() {
 		log.Infof("no zboot; can't do reset\n")
 		return
 	}
-	rebootCmd := exec.Command("zboot", "reset")
-	zbootMutex.Lock() // we are going to reboot
-	_, err := rebootCmd.Output()
-	zbootMutex.Unlock()
+	_, err := execWithRetry(true, "zboot", "reset")
 	if err != nil {
 		log.Fatalf("zboot reset: err %v\n", err)
 	}
+}
+
+func execWithRetry(dolog bool, command string, args ...string) ([]byte, error) {
+	for {
+		out, done, err := execWithTimeout(dolog, command, args...)
+		if err != nil {
+			return out, err
+		}
+		if done {
+			return out, nil
+		}
+		log.Errorf("Retrying %s %v", command, args)
+	}
+}
+
+func execWithTimeout(dolog bool, command string, args ...string) ([]byte, bool, error) {
+
+	ctx, cancel := context.WithTimeout(context.Background(),
+		10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, command, args...)
+
+	if dolog {
+		log.Infof("Waiting for zbootMutex.lock for %s %+v\n",
+			command, args)
+	}
+	zbootMutex.Lock()
+	if dolog {
+		log.Infof("Got zbootMutex.lock. Executing %s %+v\n",
+			command, args)
+	}
+
+	out, err := cmd.Output()
+
+	zbootMutex.Unlock()
+	if dolog {
+		log.Infof("Released zbootMutex.lock for %s %+v\n",
+			command, args)
+	}
+
+	if ctx.Err() == context.DeadlineExceeded {
+		return nil, false, nil
+	}
+	return out, true, err
 }
 
 // tell watchdog we are fine
@@ -57,10 +102,7 @@ func WatchdogOK() {
 	if !IsAvailable() {
 		return
 	}
-	watchDogCmd := exec.Command("zboot", "watchdog")
-	zbootMutex.Lock()
-	_, err := watchDogCmd.Output()
-	zbootMutex.Unlock()
+	_, err := execWithRetry(false, "zboot", "watchdog")
 	if err != nil {
 		log.Fatalf("zboot watchdog: err %v\n", err)
 	}
@@ -71,6 +113,10 @@ func WatchdogOK() {
 // than once per process.
 var currentPartition string
 
+func SetCurpart(curpart string) {
+	currentPartition = curpart
+}
+
 // partition routines
 func GetCurrentPartition() string {
 	if !IsAvailable() {
@@ -80,10 +126,7 @@ func GetCurrentPartition() string {
 		return currentPartition
 	}
 	log.Debugf("calling zboot curpart - not in cache\n")
-	curPartCmd := exec.Command("zboot", "curpart")
-	zbootMutex.Lock()
-	ret, err := curPartCmd.Output()
-	zbootMutex.Unlock()
+	ret, err := execWithRetry(false, "zboot", "curpart")
 	if err != nil {
 		log.Fatalf("zboot curpart: err %v\n", err)
 	}
@@ -151,10 +194,7 @@ func GetPartitionState(partName string) string {
 			return "unused"
 		}
 	}
-	partStateCmd := exec.Command("zboot", "partstate", partName)
-	zbootMutex.Lock()
-	ret, err := partStateCmd.Output()
-	zbootMutex.Unlock()
+	ret, err := execWithRetry(false, "zboot", "partstate", partName)
 	if err != nil {
 		log.Fatalf("zboot partstate %s: err %v\n", partName, err)
 	}
@@ -179,11 +219,8 @@ func setPartitionState(partName string, partState string) {
 	validatePartitionName(partName)
 	validatePartitionState(partState)
 
-	setPartStateCmd := exec.Command("zboot", "set_partstate",
+	_, err := execWithRetry(true, "zboot", "set_partstate",
 		partName, partState)
-	zbootMutex.Lock()
-	_, err := setPartStateCmd.Output()
-	zbootMutex.Unlock()
 	if err != nil {
 		log.Fatalf("zboot set_partstate %s %s: err %v\n",
 			partName, partState, err)
@@ -204,10 +241,7 @@ func GetPartitionDevname(partName string) string {
 	}
 	log.Debugf("calling zboot partdev %s - not in cache\n", partName)
 
-	getPartDevCmd := exec.Command("zboot", "partdev", partName)
-	zbootMutex.Lock()
-	ret, err := getPartDevCmd.Output()
-	zbootMutex.Unlock()
+	ret, err := execWithRetry(false, "zboot", "partdev", partName)
 	if err != nil {
 		log.Fatalf("zboot partdev %s: err %v\n", partName, err)
 	}
@@ -341,7 +375,7 @@ func WriteToPartition(srcFilename string, partName string) error {
 	return nil
 }
 
-// Transition current from inprogress to active, and other from active
+// Transition current from inprogress to active, and other from active/inprogress
 // to unused
 func MarkCurrentPartitionStateActive() error {
 
@@ -358,10 +392,17 @@ func MarkCurrentPartitionStateActive() error {
 	log.Infof("Mark the current partition %s, active\n", curPart)
 	setCurrentPartitionStateActive()
 
-	log.Infof("Check other partition %s for active state\n", otherPart)
-	if ret := IsOtherPartitionStateActive(); ret == false {
-		errStr := fmt.Sprintf("Other partition %s, is not active",
-			otherPart)
+	log.Infof("Check other partition %s for active state or inprogress\n",
+		otherPart)
+	state := GetPartitionState(otherPart)
+	switch state {
+	case "active":
+		// Normal case
+	case "inprogress":
+		// Activated what was already on the other partition
+	default:
+		errStr := fmt.Sprintf("Other partition %s, is %s not active/inprogress",
+			otherPart, state)
 		return errors.New(errStr)
 	}
 

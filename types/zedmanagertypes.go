@@ -4,10 +4,11 @@
 package types
 
 import (
-	"github.com/satori/go.uuid"
-	log "github.com/sirupsen/logrus"
 	"net"
 	"time"
+
+	uuid "github.com/satori/go.uuid"
+	log "github.com/sirupsen/logrus"
 )
 
 type UrlCloudCfg struct {
@@ -43,10 +44,15 @@ type UUIDandVersion struct {
 // (advertize the EID in lisp and boot the guest) is driven by the Activate
 // attribute.
 type AppInstanceConfig struct {
-	UUIDandVersion      UUIDandVersion
-	DisplayName         string
-	ConfigSha256        string
-	ConfigSignature     string
+	UUIDandVersion  UUIDandVersion
+	DisplayName     string
+	ConfigSha256    string
+	ConfigSignature string
+
+	// Error
+	//	If this is set, do not process further.. Just set the status to error
+	//	so the cloud gets it.
+	Errors              []string
 	FixedResources      VmConfig // CPU etc
 	StorageConfigList   []StorageConfig
 	Activate            bool
@@ -56,6 +62,7 @@ type AppInstanceConfig struct {
 	RestartCmd          AppInstanceOpsCmd
 	PurgeCmd            AppInstanceOpsCmd
 	CloudInitUserData   string // base64-encoded
+	RemoteConsole       bool
 }
 
 type AppInstanceOpsCmd struct {
@@ -156,6 +163,19 @@ type EIDOverlayConfig struct {
 	AppMacAddr net.HardwareAddr // If set use it for vif
 	AppIPAddr  net.IP           // EIDv4 or EIDv6
 	Network    uuid.UUID
+
+	// UsesNetworkInstance
+	//   This attribute can be deleted when we stop network-service
+	//   support.
+	UsesNetworkInstance bool
+	// Error
+	//	If there is a parsing error and this uLNetwork config cannot be
+	//	processed, set the error here. This allows the error to be propagated
+	//  back to zedcloud
+	//	If this is non-empty ( != ""), the network Config should not be
+	// 	processed further. It Should just	be flagged to be in error state
+	//  back to the cloud.
+	Error string
 }
 
 // If the Target is "" or "disk", then this becomes a vdisk for the domU

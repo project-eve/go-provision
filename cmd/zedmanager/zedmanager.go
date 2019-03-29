@@ -10,6 +10,9 @@ package zedmanager
 import (
 	"flag"
 	"fmt"
+	"os"
+	"time"
+
 	"github.com/google/go-cmp/cmp"
 	"github.com/satori/go.uuid"
 	log "github.com/sirupsen/logrus"
@@ -19,8 +22,6 @@ import (
 	"github.com/zededa/go-provision/pubsub"
 	"github.com/zededa/go-provision/types"
 	"github.com/zededa/go-provision/uuidtonum"
-	"os"
-	"time"
 )
 
 const (
@@ -63,14 +64,9 @@ var debug = false
 var debugOverride bool // From command line arg
 
 func Run() {
-	logf, err := agentlog.Init(agentName)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer logf.Close()
-
 	versionPtr := flag.Bool("v", false, "Version")
 	debugPtr := flag.Bool("d", false, "Debug flag")
+	curpartPtr := flag.String("c", "", "Current partition")
 	flag.Parse()
 	debug = *debugPtr
 	debugOverride = debug
@@ -79,10 +75,17 @@ func Run() {
 	} else {
 		log.SetLevel(log.InfoLevel)
 	}
+	curpart := *curpartPtr
 	if *versionPtr {
 		fmt.Printf("%s: %s\n", os.Args[0], Version)
 		return
 	}
+	logf, err := agentlog.Init(agentName, curpart)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer logf.Close()
+
 	if err := pidfile.CheckAndCreatePidfile(agentName); err != nil {
 		log.Fatal(err)
 	}
@@ -531,8 +534,24 @@ func handleCreate(ctx *zedmanagerContext, key string,
 	status.EIDList = make([]types.EIDStatusDetails,
 		len(config.OverlayNetworkList))
 
+	if len(config.Errors) > 0 {
+		// Combine all errors from Config parsing state and send them in Status
+		status.Error = ""
+		for i, errStr := range config.Errors {
+			status.Error += errStr
+			log.Errorf("App Instance %s-%s: Error(%d): %s",
+				config.DisplayName, config.UUIDandVersion.UUID, i, errStr)
+		}
+		log.Errorf("App Instance %s-%s: Errors in App Instance Create.",
+			config.DisplayName, config.UUIDandVersion.UUID)
+	}
 	publishAppInstanceStatus(ctx, &status)
-	handleCreate2(ctx, config, status)
+
+	// If there are no errors, go ahead with Instance creation.
+	if status.Error == "" {
+		handleCreate2(ctx, config, status)
+	}
+
 }
 
 func handleCreate2(ctx *zedmanagerContext, config types.AppInstanceConfig,
@@ -760,6 +779,16 @@ func handleDNSModify(ctxArg interface{}, key string, statusArg interface{}) {
 		return
 	}
 	log.Infof("handleDNSModify for %s\n", key)
+	if status.Testing {
+		log.Infof("handleDNSModify ignoring Testing\n")
+		return
+	}
+	if cmp.Equal(deviceNetworkStatus, status) {
+		log.Infof("handleDNSModify no change\n")
+		return
+	}
+	log.Infof("handleDNSModify: changed %v",
+		cmp.Diff(deviceNetworkStatus, status))
 	deviceNetworkStatus = status
 	log.Infof("handleDNSModify done for %s\n", key)
 }

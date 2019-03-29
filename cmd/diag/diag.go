@@ -47,18 +47,21 @@ const (
 // State passed to handlers
 type diagContext struct {
 	devicenetwork.DeviceNetworkContext
-	forever                bool // Keep on reporting until ^C
-	pacContents            bool // Print PAC file contents
-	ledCounter             int  // Supress work and output
-	subGlobalConfig        *pubsub.Subscription
-	subLedBlinkCounter     *pubsub.Subscription
-	subDeviceNetworkStatus *pubsub.Subscription
-	gotBC                  bool
-	gotDNS                 bool
-	serverNameAndPort      string
-	serverName             string // Without port number
-	zedcloudCtx            *zedcloud.ZedCloudContext
-	cert                   *tls.Certificate
+	DevicePortConfigList    *types.DevicePortConfigList
+	forever                 bool // Keep on reporting until ^C
+	pacContents             bool // Print PAC file contents
+	ledCounter              int  // Supress work and output
+	subGlobalConfig         *pubsub.Subscription
+	subLedBlinkCounter      *pubsub.Subscription
+	subDeviceNetworkStatus  *pubsub.Subscription
+	subDevicePortConfigList *pubsub.Subscription
+	gotBC                   bool
+	gotDNS                  bool
+	gotDPCList              bool
+	serverNameAndPort       string
+	serverName              string // Without port number
+	zedcloudCtx             *zedcloud.ZedCloudContext
+	cert                    *tls.Certificate
 }
 
 // Set from Makefile
@@ -70,14 +73,9 @@ var simulateDnsFailure = false
 var simulatePingFailure = false
 
 func Run() {
-	logf, err := agentlog.Init(agentName)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer logf.Close()
-
 	versionPtr := flag.Bool("v", false, "Version")
 	debugPtr := flag.Bool("d", false, "Debug flag")
+	curpartPtr := flag.String("c", "", "Current partition")
 	stdoutPtr := flag.Bool("s", false, "Use stdout")
 	foreverPtr := flag.Bool("f", false, "Forever flag")
 	pacContentsPtr := flag.Bool("p", false, "Print PAC file contents")
@@ -91,6 +89,7 @@ func Run() {
 	} else {
 		log.SetLevel(log.InfoLevel)
 	}
+	curpart := *curpartPtr
 	useStdout := *stdoutPtr
 	simulateDnsFailure = *simulateDnsFailurePtr
 	simulatePingFailure = *simulatePingFailurePtr
@@ -98,6 +97,12 @@ func Run() {
 		fmt.Printf("%s: %s\n", os.Args[0], Version)
 		return
 	}
+	logf, err := agentlog.Init(agentName, curpart)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer logf.Close()
+
 	if useStdout {
 		multi := io.MultiWriter(logf, os.Stdout)
 		log.SetOutput(multi)
@@ -108,6 +113,7 @@ func Run() {
 		pacContents: *pacContentsPtr,
 	}
 	ctx.DeviceNetworkStatus = &types.DeviceNetworkStatus{}
+	ctx.DevicePortConfigList = &types.DevicePortConfigList{}
 
 	// XXX should we subscribe to and get GlobalConfig for debug??
 
@@ -174,6 +180,16 @@ func Run() {
 	ctx.subDeviceNetworkStatus = subDeviceNetworkStatus
 	subDeviceNetworkStatus.Activate()
 
+	subDevicePortConfigList, err := pubsub.SubscribePersistent("nim",
+		types.DevicePortConfigList{}, false, &ctx)
+	if err != nil {
+		errStr := fmt.Sprintf("ERROR: internal Subscribe failed %s\n", err)
+		panic(errStr)
+	}
+	subDevicePortConfigList.ModifyHandler = handleDPCModify
+	ctx.subDevicePortConfigList = subDevicePortConfigList
+	subDevicePortConfigList.Activate()
+
 	for {
 		select {
 		case change := <-subLedBlinkCounter.C:
@@ -183,8 +199,12 @@ func Run() {
 		case change := <-subDeviceNetworkStatus.C:
 			ctx.gotDNS = true
 			subDeviceNetworkStatus.ProcessChange(change)
+
+		case change := <-subDevicePortConfigList.C:
+			ctx.gotDPCList = true
+			subDevicePortConfigList.ProcessChange(change)
 		}
-		if !ctx.forever && ctx.gotDNS && ctx.gotBC {
+		if !ctx.forever && ctx.gotDNS && ctx.gotBC && ctx.gotDPCList {
 			break
 		}
 	}
@@ -232,7 +252,12 @@ func handleDNSModify(ctxArg interface{}, key string, statusArg interface{}) {
 		return
 	}
 	log.Infof("handleDNSModify for %s\n", key)
+	if status.Testing {
+		log.Infof("handleDNSModify ignoring Testing\n")
+		return
+	}
 	if cmp.Equal(ctx.DeviceNetworkStatus, status) {
+		log.Infof("handleDNSModify unchanged\n")
 		return
 	}
 	log.Infof("handleDNSModify: changed %v",
@@ -258,12 +283,33 @@ func handleDNSDelete(ctxArg interface{}, key string,
 	log.Infof("handleDNSDelete done for %s\n", key)
 }
 
+func handleDPCModify(ctxArg interface{}, key string, statusArg interface{}) {
+
+	status := cast.CastDevicePortConfigList(statusArg)
+	ctx := ctxArg.(*diagContext)
+	if key != "global" {
+		log.Infof("handleDPCModify: ignoring %s\n", key)
+		return
+	}
+	log.Infof("handleDPCModify for %s\n", key)
+	if cmp.Equal(ctx.DevicePortConfigList, status) {
+		return
+	}
+	log.Infof("handleDPCModify: changed %v",
+		cmp.Diff(ctx.DevicePortConfigList, status))
+	*ctx.DevicePortConfigList = status
+	// XXX can we limit to interfaces which changed?
+	// XXX exclude if only timestamps changed?
+	printOutput(ctx)
+	log.Infof("handleDPCModify done for %s\n", key)
+}
+
 // Print output for all interfaces
 // XXX can we limit to interfaces which changed?
 func printOutput(ctx *diagContext) {
 
 	// Defer until we have an initial BlinkCounter and DeviceNetworkStatus
-	if !ctx.gotDNS || !ctx.gotBC {
+	if !ctx.gotDNS || !ctx.gotBC || !ctx.gotDPCList {
 		return
 	}
 
@@ -325,11 +371,48 @@ func printOutput(ctx *diagContext) {
 			ctx.ledCounter)
 	}
 
+	// Print info about fallback
+	DPCLen := len(ctx.DevicePortConfigList.PortConfigList)
+	if DPCLen > 0 {
+		first := ctx.DevicePortConfigList.PortConfigList[0]
+		if ctx.DevicePortConfigList.CurrentIndex != 0 {
+			fmt.Printf("WARNING: Not using highest priority DevicePortConfig key %s due to %s\n",
+				first.Key, first.LastError)
+			for i, dpc := range ctx.DevicePortConfigList.PortConfigList {
+				if i == 0 {
+					continue
+				}
+				if i != ctx.DevicePortConfigList.CurrentIndex {
+					fmt.Printf("WARNING: Not using priority %d DevicePortConfig key %s due to %s\n",
+						i, dpc.Key, dpc.LastError)
+				} else {
+					fmt.Printf("INFO: Using priority %d DevicePortConfig key %s\n",
+						i, dpc.Key)
+					break
+				}
+			}
+			if DPCLen-1 > ctx.DevicePortConfigList.CurrentIndex {
+				fmt.Printf("INFO: Have %d backup DevicePortConfig\n",
+					DPCLen-1-ctx.DevicePortConfigList.CurrentIndex)
+			}
+		} else {
+			fmt.Printf("INFO: Using highest priority DevicePortConfig key %s\n",
+				first.Key)
+			if DPCLen > 1 {
+				fmt.Printf("INFO: Have %d backup DevicePortConfig\n",
+					DPCLen-1)
+			}
+		}
+	}
 	numPorts := len(ctx.DeviceNetworkStatus.Ports)
 	mgmtPorts := 0
 	passPorts := 0
 	passOtherPorts := 0
 
+	// XXX add to DeviceNetworkStatus?
+	// fmt.Printf("DEBUG: Using DevicePortConfig key %s prio %s lastSucceeded %v\n",
+	// 	ctx.DeviceNetworkStatus.Key, ctx.DeviceNetworkStatus.TimePriority,
+	//	ctx.DeviceNetworkStatus.LastSucceeded)
 	numMgmtPorts := len(types.GetMgmtPortsAny(*ctx.DeviceNetworkStatus, 0))
 	fmt.Printf("INFO: Have %d total ports. %d ports should be connected to EV controller\n", numPorts, numMgmtPorts)
 	for _, port := range ctx.DeviceNetworkStatus.Ports {
@@ -370,6 +453,11 @@ func printOutput(ctx *diagContext) {
 					ifname, ai.Addr, ai.Geo)
 			}
 		}
+		if ipCount == 0 {
+			fmt.Printf("INFO: %s: No IP address\n",
+				ifname)
+		}
+
 		fmt.Printf("INFO: %s: DNS servers: ", ifname)
 		for _, ds := range port.DnsServers {
 			fmt.Printf("%s, ", ds.String())
@@ -377,7 +465,7 @@ func printOutput(ctx *diagContext) {
 		fmt.Printf("\n")
 		// If static print static config
 		if port.Dhcp == types.DT_STATIC {
-			fmt.Printf("INFO: %s: Static IP config: %s\n",
+			fmt.Printf("INFO: %s: Static IP subnet: %s\n",
 				ifname, port.Subnet.String())
 			fmt.Printf("INFO: %s: Static IP router: %s\n",
 				ifname, port.Gateway.String())
@@ -648,8 +736,9 @@ func myGet(zedcloudCtx *zedcloud.ZedCloudContext, requrl string, ifname string,
 		fmt.Printf("INFO: %s: Using proxy %s to reach %s\n",
 			ifname, proxyUrl.String(), requrl)
 	}
+	const allowProxy = true
 	resp, contents, err := zedcloud.SendOnIntf(*zedcloudCtx,
-		requrl, ifname, 0, nil, true)
+		requrl, ifname, 0, nil, allowProxy, 15)
 	if err != nil {
 		fmt.Printf("ERROR: %s: get %s failed: %s\n",
 			ifname, requrl, err)

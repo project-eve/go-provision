@@ -8,6 +8,15 @@ package zedagent
 import (
 	"bytes"
 	"fmt"
+	"io/ioutil"
+	"os"
+	"os/exec"
+	"regexp"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
 	"github.com/eriknordmark/ipinfo"
 	"github.com/eriknordmark/netlink"
 	"github.com/golang/protobuf/proto"
@@ -26,14 +35,6 @@ import (
 	"github.com/zededa/go-provision/netclone"
 	"github.com/zededa/go-provision/types"
 	"github.com/zededa/go-provision/zedcloud"
-	"io/ioutil"
-	"os"
-	"os/exec"
-	"regexp"
-	"strconv"
-	"strings"
-	"syscall"
-	"time"
 )
 
 // Also report usage for these paths
@@ -345,7 +346,7 @@ func ExecuteXentopCmd() [][]string {
 					cpuStorageStat[f][counter] = finalOutput[f][out]
 				}
 			} else {
-				log.Debugf("space: ", finalOutput[f][counter])
+				log.Debugf("space: %+v", finalOutput[f][counter])
 			}
 		}
 		counter = 0
@@ -370,7 +371,7 @@ func PublishMetricsToZedCloud(ctx *zedagentContext, cpuStorageStat [][]string,
 
 	info, err := host.Info()
 	if err != nil {
-		log.Fatal("host.Info(): %s\n", err)
+		log.Fatalf("host.Info(): %s\n", err)
 	}
 	log.Debugf("uptime %d = %d days\n",
 		info.Uptime, info.Uptime/(3600*24))
@@ -402,7 +403,7 @@ func PublishMetricsToZedCloud(ctx *zedagentContext, cpuStorageStat [][]string,
 			(100.0 - (ram.UsedPercent))
 	}
 	// Use the network metrics from zedrouter subscription
-	// Only report stats for the ports plus dbo1x0
+	// Only report stats for the ports in DeviceNetworkStatus
 	portNames := types.ReportPorts(*deviceNetworkStatus)
 	for _, port := range portNames {
 		var metric *types.NetworkMetric
@@ -600,8 +601,17 @@ func PublishMetricsToZedCloud(ctx *zedagentContext, cpuStorageStat [][]string,
 
 		appCpuTotal, _ := strconv.ParseUint(cpuStorageStat[arr][3], 10, 0)
 		ReportAppMetric.Cpu.Total = *proto.Uint64(appCpuTotal)
-		// We don't report ReportAppMetric.Cpu.Uptime
-		// since we already report BootTime for the app
+		// This is redundant since we already report BootTime but
+		// makes it part of the time series
+		// Note that Uptime is seconds we've been up. We're converting
+		// to a timestamp. That better not be interpreted as a time since
+		// the epoch
+		if !ds.BootTime.IsZero() {
+			elapsed := time.Since(ds.BootTime)
+			uptime, _ := ptypes.TimestampProto(
+				time.Unix(0, elapsed.Nanoseconds()).UTC())
+			ReportAppMetric.Cpu.UpTime = uptime
+		}
 
 		// This is in kbytes
 		totalAppMemory, _ := strconv.ParseUint(cpuStorageStat[arr][5], 10, 0)
@@ -905,6 +915,7 @@ func PublishDeviceInfoToZedCloud(ctx *zedagentContext) {
 				swInfo.DownloadProgress = 0
 			}
 		}
+		addUserSwInfo(swInfo)
 		return swInfo
 	}
 
@@ -937,14 +948,13 @@ func PublishDeviceInfoToZedCloud(ctx *zedagentContext) {
 			errInfo.Timestamp = errTime
 			swInfo.SwErr = errInfo
 		}
+		addUserSwInfo(swInfo)
 		ReportDeviceInfo.SwList = append(ReportDeviceInfo.SwList,
 			swInfo)
 	}
 
 	// Read interface name from library and match it with port name from
-	// global status. Only report the ports plus dbo1x0
-	// XXX should get this info from zedrouter subscription
-	// Should we put it all in DeviceNetworkStatus?
+	// global status. Only report the ports in DeviceNetworkStatus
 	interfaces, _ := psutilnet.Interfaces()
 	portNames := types.ReportPorts(*deviceNetworkStatus)
 	for _, port := range portNames {
@@ -992,7 +1002,7 @@ func PublishDeviceInfoToZedCloud(ctx *zedagentContext) {
 
 	info, err := host.Info()
 	if err != nil {
-		log.Fatal("host.Info(): %s\n", err)
+		log.Fatalf("host.Info(): %s\n", err)
 	}
 	log.Debugf("uptime %d = %d days\n",
 		info.Uptime, info.Uptime/(3600*24))
@@ -1023,6 +1033,16 @@ func PublishDeviceInfoToZedCloud(ctx *zedagentContext) {
 		ReportDeviceInfo.MetricItems = append(ReportDeviceInfo.MetricItems, item)
 	}
 
+	ReportDeviceInfo.LastRebootReason = ctx.rebootReason
+	if !ctx.rebootTime.IsZero() {
+		rebootTime, _ := ptypes.TimestampProto(ctx.rebootTime)
+		ReportDeviceInfo.LastRebootTime = rebootTime
+	}
+
+	ReportDeviceInfo.SystemAdapter = encodeSystemAdapterInfo(ctx.devicePortConfigList)
+
+	ReportDeviceInfo.RestartCounter = ctx.restartCounter
+
 	ReportInfo.InfoContent = new(zmet.ZInfoMsg_Dinfo)
 	if x, ok := ReportInfo.GetInfoContent().(*zmet.ZInfoMsg_Dinfo); ok {
 		x.Dinfo = ReportDeviceInfo
@@ -1046,6 +1066,48 @@ func PublishDeviceInfoToZedCloud(ctx *zedagentContext) {
 			zedcloudCtx, true)
 	} else {
 		writeSentDeviceInfoProtoMessage(data)
+	}
+}
+
+// Convert the implementation details to the user-friendly userStatus and subStatus
+func addUserSwInfo(swInfo *zmet.ZInfoDevSW) {
+	switch swInfo.Status {
+	case zmet.ZSwState_INITIAL:
+		swInfo.UserStatus = zmet.BaseOsStatus_UPDATING
+		swInfo.SubStatus = "Initializing update"
+	case zmet.ZSwState_DOWNLOAD_STARTED:
+		swInfo.UserStatus = zmet.BaseOsStatus_UPDATING
+		swInfo.SubStatus = fmt.Sprintf("Downloading %d%% done", swInfo.DownloadProgress)
+	case zmet.ZSwState_DOWNLOADED:
+		swInfo.UserStatus = zmet.BaseOsStatus_UPDATING
+		swInfo.SubStatus = "Downloaded 100%"
+	case zmet.ZSwState_DELIVERED:
+		if !swInfo.Activated {
+			swInfo.UserStatus = zmet.BaseOsStatus_UPDATING
+			swInfo.SubStatus = "Downloaded and verified"
+		} else {
+			swInfo.UserStatus = zmet.BaseOsStatus_NONE
+		}
+	case zmet.ZSwState_INSTALLED:
+		switch swInfo.PartitionState {
+		case "active":
+			if swInfo.Activated {
+				swInfo.UserStatus = zmet.BaseOsStatus_ACTIVE
+			} else {
+				swInfo.UserStatus = zmet.BaseOsStatus_FALLBACK
+			}
+		case "updating":
+			swInfo.UserStatus = zmet.BaseOsStatus_UPDATING
+			swInfo.SubStatus = "About to reboot"
+		case "inprogress":
+			swInfo.UserStatus = zmet.BaseOsStatus_TESTING
+		case "unused":
+			swInfo.UserStatus = zmet.BaseOsStatus_NONE
+		}
+	// XXX anything else?
+	default:
+		// The other states are use for app instances not for baseos
+		swInfo.UserStatus = zmet.BaseOsStatus_NONE
 	}
 }
 
@@ -1119,10 +1181,9 @@ func getNetInfo(interfaceDetail psutilnet.InterfaceStat,
 		}
 	}
 
-	// XXX Should we report non-management ports as well?
-	port := types.GetMgmtPort(*deviceNetworkStatus, interfaceDetail.Name)
+	port := types.GetPort(*deviceNetworkStatus, interfaceDetail.Name)
 	if port != nil {
-		networkInfo.Uplink = true
+		networkInfo.Uplink = port.IsMgmt
 		// fill in ZInfoDNS
 		networkInfo.Dns = new(zmet.ZInfoDNS)
 		networkInfo.Dns.DNSdomain = port.DomainName
@@ -1158,8 +1219,85 @@ func getNetInfo(interfaceDetail psutilnet.InterfaceStat,
 			errInfo.Timestamp = errTime
 			networkInfo.NetworkErr = errInfo
 		}
+		if port.Proxy != nil {
+			networkInfo.Proxy = encodeProxyStatus(port.Proxy)
+		}
 	}
 	return networkInfo
+}
+
+func encodeProxyStatus(proxyConfig *types.ProxyConfig) *zmet.ProxyStatus {
+	status := new(zmet.ProxyStatus)
+	status.Proxies = make([]*zmet.ProxyEntry, len(proxyConfig.Proxies))
+	for i, pe := range proxyConfig.Proxies {
+		pep := new(zmet.ProxyEntry)
+		pep.Type = uint32(pe.Type)
+		pep.Server = pe.Server
+		pep.Port = pe.Port
+		status.Proxies[i] = pep
+	}
+	status.Exceptions = proxyConfig.Exceptions
+	status.Pacfile = proxyConfig.Pacfile
+	status.NetworkProxyEnable = proxyConfig.NetworkProxyEnable
+	status.NetworkProxyURL = proxyConfig.NetworkProxyURL
+	status.WpadURL = proxyConfig.WpadURL
+	// XXX make into debugf?
+	log.Infof("encodeProxyStatus: %+v\n", status)
+	return status
+}
+
+func encodeSystemAdapterInfo(dpcl types.DevicePortConfigList) *zmet.SystemAdapterInfo {
+	info := new(zmet.SystemAdapterInfo)
+	info.CurrentIndex = uint32(dpcl.CurrentIndex)
+	info.Status = make([]*zmet.DevicePortStatus, len(dpcl.PortConfigList))
+	for i, dpc := range dpcl.PortConfigList {
+		dps := new(zmet.DevicePortStatus)
+		dps.Version = uint32(dpc.Version)
+		dps.Key = dpc.Key
+		ts, _ := ptypes.TimestampProto(dpc.TimePriority)
+		dps.TimePriority = ts
+		if !dpc.LastFailed.IsZero() {
+			ts, _ := ptypes.TimestampProto(dpc.LastFailed)
+			dps.LastFailed = ts
+		}
+		if !dpc.LastSucceeded.IsZero() {
+			ts, _ := ptypes.TimestampProto(dpc.LastSucceeded)
+			dps.LastSucceeded = ts
+		}
+		dps.LastError = dpc.LastError
+
+		dps.Ports = make([]*zmet.DevicePort, len(dpc.Ports))
+		for j, p := range dpc.Ports {
+			dps.Ports[j] = encodeNetworkPortConfig(&p)
+		}
+		info.Status[i] = dps
+	}
+	// XXX make into debugf?
+	log.Infof("encodeSystemAdapterInfo: %+v\n", info)
+	return info
+}
+
+func encodeNetworkPortConfig(npc *types.NetworkPortConfig) *zmet.DevicePort {
+	dp := new(zmet.DevicePort)
+	dp.Ifname = npc.IfName
+	dp.Name = npc.Name
+	dp.IsMgmt = npc.IsMgmt
+	dp.Free = npc.Free
+	// DhcpConfig
+	dp.DhcpType = uint32(npc.Dhcp)
+	dp.Subnet = npc.AddrSubnet
+	dp.Gateway = npc.Gateway.String()
+	dp.Domainname = npc.DomainName
+	dp.NtpServer = npc.NtpServer.String()
+	for _, d := range npc.DnsServers {
+		dp.DnsServers = append(dp.DnsServers, d.String())
+	}
+	// XXX Not in definition. Remove?
+	// XXX  string dhcpRangeLow = 17;
+	// XXX  string dhcpRangeHigh = 18;
+
+	dp.Proxy = encodeProxyStatus(&npc.ProxyConfig)
+	return dp
 }
 
 // This function is called per change, hence needs to try over all management ports
@@ -1328,8 +1466,9 @@ func appIfnameToName(aiStatus *types.AppInstanceStatus, vifname string) string {
 func SendProtobuf(url string, buf *bytes.Buffer, size int64,
 	iteration int) error {
 
+	const return400 = true
 	resp, _, err := zedcloud.SendOnAllIntf(zedcloudCtx, url,
-		size, buf, iteration, true)
+		size, buf, iteration, return400)
 	if resp != nil && resp.StatusCode >= 400 && resp.StatusCode < 500 {
 		log.Infof("SendProtoBuf: %s silently ignore code %d\n",
 			url, resp.StatusCode)
@@ -1351,8 +1490,9 @@ func SendMetricsProtobuf(ReportMetrics *zmet.ZMetricMsg,
 	buf := bytes.NewBuffer(data)
 	size := int64(proto.Size(ReportMetrics))
 	metricsUrl := serverName + "/" + metricsApi
+	const return400 = false
 	_, _, err = zedcloud.SendOnAllIntf(zedcloudCtx, metricsUrl,
-		size, buf, iteration, false)
+		size, buf, iteration, return400)
 	if err != nil {
 		// Hopefully next timeout will be more successful
 		log.Errorf("SendMetricsProtobuf failed: %s\n", err)
@@ -1395,7 +1535,7 @@ func partitionSize(part string) uint64 {
 func getCpuSecs() uint64 {
 	contents, err := ioutil.ReadFile("/proc/uptime")
 	if err != nil {
-		log.Fatal("/proc/uptime: %s\n", err)
+		log.Fatalf("/proc/uptime: %s\n", err)
 	}
 	lines := strings.Split(string(contents), "\n")
 
@@ -1438,7 +1578,7 @@ func getDefaultRouters(ifname string) []string {
 		return res
 	}
 	ifindex := link.Attrs().Index
-	table := syscall.RT_TABLE_MAIN
+	table := types.GetDefaultRouteTable()
 	// Note that a default route is represented as nil Dst
 	filter := netlink.Route{Table: table, LinkIndex: ifindex, Dst: nil}
 	fflags := netlink.RT_FILTER_TABLE
@@ -1447,7 +1587,7 @@ func getDefaultRouters(ifname string) []string {
 	routes, err := netlink.RouteListFiltered(syscall.AF_UNSPEC,
 		&filter, fflags)
 	if err != nil {
-		log.Fatal("getDefaultRouters RouteList failed: %v\n", err)
+		log.Fatalf("getDefaultRouters RouteList failed: %v\n", err)
 	}
 	// log.Debugf("getDefaultRouters(%s) - got %d\n", ifname, len(routes))
 	for _, rt := range routes {

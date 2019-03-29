@@ -5,30 +5,33 @@ package client
 
 import (
 	"fmt"
+	"mime"
+	"net/http"
+	"strings"
+
 	"github.com/golang/protobuf/proto"
 	"github.com/satori/go.uuid"
 	log "github.com/sirupsen/logrus"
 	"github.com/zededa/api/zconfig"
 	"github.com/zededa/go-provision/hardware"
-	"mime"
-	"net/http"
-	"strings"
 )
 
-// Return UUID and hardwaremodel
-func parseConfig(configUrl string, resp *http.Response, contents []byte) (uuid.UUID, string, error) {
+// Return UUID, hardwaremodel, enterprise, and devicename
+func parseConfig(configUrl string, resp *http.Response, contents []byte) (uuid.UUID, string, string, string, error) {
 	var devUUID uuid.UUID
 	var hardwaremodel string
+	var enterprise string
+	var name string
 
 	if err := validateConfigMessage(configUrl, resp); err != nil {
 		log.Errorln("validateConfigMessage: ", err)
-		return devUUID, hardwaremodel, err
+		return devUUID, hardwaremodel, enterprise, name, err
 	}
 
 	config, err := readDeviceConfigProtoMessage(contents)
 	if err != nil {
 		log.Errorln("readDeviceConfigProtoMessage: ", err)
-		return devUUID, hardwaremodel, err
+		return devUUID, hardwaremodel, enterprise, name, err
 	}
 	// Check if we have an override from the device config
 	manufacturer := config.GetManufacturer()
@@ -41,9 +44,11 @@ func parseConfig(configUrl string, resp *http.Response, contents []byte) (uuid.U
 	devUUID, err = uuid.FromString(uuidStr)
 	if err != nil {
 		log.Errorf("uuid.FromString(%s): %s\n", uuidStr, err)
-		return devUUID, hardwaremodel, err
+		return devUUID, hardwaremodel, enterprise, name, err
 	}
-	return devUUID, hardwaremodel, nil
+	enterprise = strings.TrimSpace(config.GetEnterprise())
+	name = strings.TrimSpace(config.GetName())
+	return devUUID, hardwaremodel, enterprise, name, nil
 }
 
 // From zedagent/handleconfig.go
@@ -76,7 +81,7 @@ func readDeviceConfigProtoMessage(contents []byte) (*zconfig.EdgeDevConfig, erro
 
 	err := proto.Unmarshal(contents, config)
 	if err != nil {
-		log.Errorln("Unmarshalling failed: %v", err)
+		log.Errorf("Unmarshalling failed: %v", err)
 		return nil, err
 	}
 	return config, nil

@@ -16,6 +16,7 @@ ADD scripts/device-steps.sh \
     scripts/generate-device.sh \
     scripts/generate-self-signed.sh \
     scripts/handlezedserverconfig.sh \
+    scripts/watchdog-report.sh \
   /opt/zededa/bin/
 ADD examples /opt/zededa/examples
 ADD AssignableAdapters /var/tmp/zededa/AssignableAdapters
@@ -28,14 +29,17 @@ RUN cp /opt/zededa/bin/versioninfo /opt/zededa/bin/versioninfo.1
 # Echo for builders enjoyment
 RUN echo Building: `cat /opt/zededa/bin/versioninfo`
 
+# go install and go vet
 RUN [ -z "$GOARCH" ] || export CC=$(echo /*-cross/bin/*-gcc)           ;\
-    go install github.com/zededa/go-provision/zedbox/...               ;\
+    go install github.com/zededa/go-provision/zedbox/... && \
+    echo "Running go vet" && go vet ./... && \
     if [ -f /go/bin/*/zedbox ] ; then mv /go/bin/*/zedbox /go/bin ; fi
+
 RUN ln -s /go/bin/zedbox /opt/zededa/bin/zedbox ;\
     for app in   \
       client domainmgr downloader hardwaremodel identitymgr ledmanager \
       logmanager verifier zedagent zedmanager zedrouter ipcmonitor nim \
-      waitforaddr diag baseosmgr wstunnelclient ;\
+      waitforaddr diag baseosmgr wstunnelclient conntrack;\
     do ln -s zedbox /opt/zededa/bin/$app ; done
 
 # Second stage of the build is creating a minimalistic container

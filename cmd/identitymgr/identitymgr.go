@@ -19,17 +19,18 @@ import (
 	"encoding/pem"
 	"flag"
 	"fmt"
+	"math/big"
+	"net"
+	"os"
+	"reflect"
+	"time"
+
 	log "github.com/sirupsen/logrus"
 	"github.com/zededa/go-provision/agentlog"
 	"github.com/zededa/go-provision/cast"
 	"github.com/zededa/go-provision/pidfile"
 	"github.com/zededa/go-provision/pubsub"
 	"github.com/zededa/go-provision/types"
-	"math/big"
-	"net"
-	"os"
-	"reflect"
-	"time"
 )
 
 const (
@@ -50,14 +51,9 @@ var debug = false
 var debugOverride bool // From command line arg
 
 func Run() {
-	logf, err := agentlog.Init(agentName)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer logf.Close()
-
 	versionPtr := flag.Bool("v", false, "Version")
 	debugPtr := flag.Bool("d", false, "Debug flag")
+	curpartPtr := flag.String("c", "", "Current partition")
 	flag.Parse()
 	debug = *debugPtr
 	debugOverride = debug
@@ -66,10 +62,17 @@ func Run() {
 	} else {
 		log.SetLevel(log.InfoLevel)
 	}
+	curpart := *curpartPtr
 	if *versionPtr {
 		fmt.Printf("%s: %s\n", os.Args[0], Version)
 		return
 	}
+	logf, err := agentlog.Init(agentName, curpart)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer logf.Close()
+
 	if err := pidfile.CheckAndCreatePidfile(agentName); err != nil {
 		log.Fatal(err)
 	}
@@ -184,8 +187,7 @@ func handleEIDConfigDelete(ctxArg interface{}, key string,
 	ctx := ctxArg.(*identityContext)
 	status := lookupEIDStatus(ctx, key)
 	if status == nil {
-		log.Errorf("handleEIDConfigDelete: unknown %s\n",
-			key, status.Key(), status)
+		log.Errorf("handleEIDConfigDelete: unknown %s\n", key)
 		return
 	}
 	handleDelete(ctx, key, status)

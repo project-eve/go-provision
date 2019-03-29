@@ -7,9 +7,10 @@ package zedrouter
 
 import (
 	"fmt"
+	"os"
+
 	log "github.com/sirupsen/logrus"
 	"github.com/zededa/go-provision/wrap"
-	"os"
 )
 
 // Need to fill in the overlay inteface name
@@ -72,9 +73,27 @@ func startRadvd(cfgPathname string, olIfname string) {
 	go wrap.Command(cmd, args...).Output()
 }
 
-//    pkill -u radvd -f radvd.${OLIFNAME}.conf
-func stopRadvd(cfgFilename string, printOnError bool) {
+func getBridgeRadvdCfgFileName(bridgeName string) (string, string) {
+	cfgFilename := "radvd." + bridgeName + ".conf"
+	cfgPathname := runDirname + "/" + cfgFilename
+	return cfgFilename, cfgPathname
+}
 
-	log.Debugf("stopRadvd: %s\n", cfgFilename)
+//    pkill -u radvd -f radvd.${OLIFNAME}.conf
+func stopRadvd(bridgeName string, printOnError bool) {
+	cfgFilename, cfgPathname := getBridgeRadvdCfgFileName(bridgeName)
+
+	log.Debugf("stopRadvd: cfgFileName:%s, cfgPathName:%s\n",
+		cfgFilename, cfgPathname)
 	pkillUserArgs("radvd", cfgFilename, printOnError)
+	deleteRadvdConfiglet(cfgPathname)
+}
+
+func restartRadvdWithNewConfig(bridgeName string) {
+	cfgFilename, cfgPathname := getBridgeRadvdCfgFileName(bridgeName)
+
+	// kill existing radvd instance
+	stopRadvd(cfgFilename, false)
+	createRadvdConfiglet(cfgPathname, bridgeName)
+	startRadvd(cfgPathname, bridgeName)
 }

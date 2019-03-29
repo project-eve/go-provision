@@ -20,6 +20,11 @@ It has these top-level messages:
 	ZInfoSW
 	ErrorInfo
 	ZInfoDevice
+	SystemAdapterInfo
+	DevicePortStatus
+	DevicePort
+	ProxyStatus
+	ProxyEntry
 	ZInfoDevSW
 	ZInfoStorage
 	ZInfoApp
@@ -62,6 +67,8 @@ It has these top-level messages:
 	ZMetricFlow
 	ZMetricLispGlobal
 	ZMetricService
+	NetworkStats
+	ZMetricNetworkStats
 	ZMetricNetworkInstance
 	ZMetricMsg
 	ZRegisterResp

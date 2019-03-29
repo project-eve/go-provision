@@ -18,6 +18,7 @@ import (
 	"github.com/satori/go.uuid"
 	log "github.com/sirupsen/logrus"
 	"github.com/zededa/api/zconfig"
+	"github.com/zededa/go-provision/agentlog"
 	"github.com/zededa/go-provision/flextimer"
 	"github.com/zededa/go-provision/pubsub"
 	"github.com/zededa/go-provision/types"
@@ -38,34 +39,7 @@ const (
 	uuidFileName    = identityDirname + "/uuid"
 )
 
-// Default values until/unless we receive them from the cloud
-// We do a GET of config every 60 seconds,
-// PUT of metrics every 60 seconds,
-// If we don't hear anything from the cloud in a week, then we reboot,
-// and during a post-update boot that time is reduced to 10 minutes.
-// On reboot if we can't get a config, then we use a saved one if the saved is
-// not older than 10 minutes.
-// A downloaded image which isn't used is garbage collected after 10 minutes.
-// If a instance has been removed its read/write vdisks are deleted after
-// one hour.
-var globalConfigDefaults = types.GlobalConfig{
-	ConfigInterval:          60,
-	MetricInterval:          60,
-	ResetIfCloudGoneTime:    7 * 24 * 3600,
-	FallbackIfCloudGoneTime: 600,
-	MintimeUpdateSuccess:    300,
-	NoUsbAccess:             false,  // XXX change defaults
-	NoSshAccess:             false,  // XXX change defaults
-	StaleConfigTime:         600,    // Use stale config for up to 10 minutes
-	DownloadGCTime:          600,    // 10 minutes
-	VdiskGCTime:             3600,   // 1 hour
-	DownloadRetryTime:       600,    // 10 minutes
-	DomainBootRetryTime:     600,    // 10 minutes
-	DefaultLogLevel:         "info", // XXX change default to warning?
-	DefaultRemoteLogLevel:   "warning",
-}
-
-var globalConfig = globalConfigDefaults
+var globalConfig = types.GlobalConfigDefaults
 
 type getconfigContext struct {
 	zedagentCtx                 *zedagentContext // Cross link
@@ -85,6 +59,7 @@ type getconfigContext struct {
 	pubBaseOsConfig             *pubsub.Publication
 	pubDatastoreConfig          *pubsub.Publication
 	pubNetworkInstanceConfig    *pubsub.Publication
+	rebootFlag                  bool
 }
 
 // tlsConfig is initialized once i.e. effectively a constant
@@ -140,7 +115,7 @@ func configTimerTask(handleChannel chan interface{},
 	getconfigCtx.lastReceivedConfigFromCloud = getconfigCtx.startTime
 	iteration := 0
 	ctx := getconfigCtx.zedagentCtx
-	rebootFlag := getLatestConfig(configUrl, iteration,
+	getconfigCtx.rebootFlag = getLatestConfig(configUrl, iteration,
 		updateInprogress, getconfigCtx)
 
 	interval := time.Duration(globalConfig.ConfigInterval) * time.Second
@@ -152,19 +127,15 @@ func configTimerTask(handleChannel chan interface{},
 	handleChannel <- ticker
 	for range ticker.C {
 		iteration += 1
-		// reboot flag is not set, go fetch new config
-		if !rebootFlag {
-			// check whether the device is still in progress state
-			// once activated, it does not go back to the inprogress
-			// state
-			if updateInprogress {
-				updateInprogress = isBaseOsCurrentPartitionStateInProgress(ctx)
-			}
-			rebootFlag = getLatestConfig(configUrl, iteration,
-				updateInprogress, getconfigCtx)
-		} else {
-			log.Infof("rebootFlag set; not getting config\n")
+		// check whether the device is still in progress state
+		// once activated, it does not go back to the inprogress
+		// state
+		if updateInprogress {
+			updateInprogress = isBaseOsCurrentPartitionStateInProgress(ctx)
 		}
+		rebootFlag := getLatestConfig(configUrl, iteration,
+			updateInprogress, getconfigCtx)
+		getconfigCtx.rebootFlag = getconfigCtx.rebootFlag || rebootFlag
 	}
 }
 
@@ -193,7 +164,7 @@ func updateConfigTimer(tickerHandle interface{}) {
 func getLatestConfig(url string, iteration int, updateInprogress bool,
 	getconfigCtx *getconfigContext) bool {
 
-	log.Debugf("getLastestConfig(%s, %d, %v)\n", url, iteration,
+	log.Debugf("getLatestConfig(%s, %d, %v)\n", url, iteration,
 		updateInprogress)
 
 	// Did we exceed the time limits?
@@ -201,8 +172,11 @@ func getLatestConfig(url string, iteration int, updateInprogress bool,
 
 	resetLimit := time.Second * time.Duration(globalConfig.ResetIfCloudGoneTime)
 	if timePassed > resetLimit {
-		log.Errorf("Exceeded outage for cloud connectivity by %d seconds- rebooting\n",
+		errStr := fmt.Sprintf("Exceeded outage for cloud connectivity %d by %d seconds; rebooting\n",
+			resetLimit/time.Second,
 			(timePassed-resetLimit)/time.Second)
+		log.Errorf(errStr)
+		agentlog.RebootReason(errStr)
 		shutdownAppsGlobal(getconfigCtx.zedagentCtx)
 		execReboot(true)
 		return true
@@ -210,15 +184,19 @@ func getLatestConfig(url string, iteration int, updateInprogress bool,
 	if updateInprogress {
 		fallbackLimit := time.Second * time.Duration(globalConfig.FallbackIfCloudGoneTime)
 		if timePassed > fallbackLimit {
-			log.Errorf("Exceeded fallback outage for cloud connectivity by %d seconds- rebooting\n",
+			errStr := fmt.Sprintf("Exceeded fallback outage for cloud connectivity %d by %d seconds; rebooting\n",
+				fallbackLimit/time.Second,
 				(timePassed-fallbackLimit)/time.Second)
+			log.Errorf(errStr)
+			agentlog.RebootReason(errStr)
 			shutdownAppsGlobal(getconfigCtx.zedagentCtx)
 			execReboot(true)
 			return true
 		}
 	}
 
-	resp, contents, err := zedcloud.SendOnAllIntf(zedcloudCtx, url, 0, nil, iteration, false)
+	const return400 = false
+	resp, contents, err := zedcloud.SendOnAllIntf(zedcloudCtx, url, 0, nil, iteration, return400)
 	if err != nil {
 		log.Errorf("getLatestConfig failed: %s\n", err)
 		if getconfigCtx.ledManagerCount == 4 {
@@ -259,7 +237,7 @@ func getLatestConfig(url string, iteration int, updateInprogress bool,
 			time.Duration(globalConfig.MintimeUpdateSuccess)
 		curPart := getBaseOsCurrentPartition(getconfigCtx.zedagentCtx)
 		if timePassed < successLimit {
-			log.Infof("getLastestConfig, curPart %s inprogress waiting for %d seconds\n", curPart, (successLimit-timePassed)/time.Second)
+			log.Infof("getLatestConfig, curPart %s inprogress waiting for %d seconds\n", curPart, (successLimit-timePassed)/time.Second)
 		} else {
 			initiateBaseOsZedCloudTestComplete(getconfigCtx)
 		}
@@ -382,7 +360,7 @@ func readSavedProtoMessage(filename string, force bool) (*zconfig.EdgeDevConfig,
 
 	err = proto.Unmarshal(contents, config)
 	if err != nil {
-		log.Errorln("readSavedProtoMessage Unmarshalling failed: %v",
+		log.Errorf("readSavedProtoMessage Unmarshalling failed: %v",
 			err)
 		return nil, err
 	}
@@ -408,7 +386,7 @@ func readDeviceConfigProtoMessage(contents []byte) (bool, *zconfig.EdgeDevConfig
 		same, prevConfigHash, configHash)
 	err := proto.Unmarshal(contents, config)
 	if err != nil {
-		log.Errorln("Unmarshalling failed: %v", err)
+		log.Errorf("Unmarshalling failed: %v", err)
 		return false, nil, err
 	}
 	return !same, config, nil

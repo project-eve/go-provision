@@ -11,6 +11,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/ioutil"
+	"net"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/google/go-cmp/cmp"
 	log "github.com/sirupsen/logrus"
 	"github.com/zededa/api/zconfig"
 	"github.com/zededa/go-provision/agentlog"
@@ -19,16 +27,8 @@ import (
 	"github.com/zededa/go-provision/pidfile"
 	"github.com/zededa/go-provision/pubsub"
 	"github.com/zededa/go-provision/types"
-	"github.com/zededa/go-provision/wrap"
 	"github.com/zededa/go-provision/zedcloud"
 	"github.com/zededa/shared/libs/zedUpload"
-	"io/ioutil"
-	"net"
-	"os"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
 )
 
 const (
@@ -74,14 +74,10 @@ var downloadRetryTime = time.Duration(600) * time.Second // Unless from GlobalCo
 
 func Run() {
 	handlersInit()
-	logf, err := agentlog.Init(agentName)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer logf.Close()
 
 	versionPtr := flag.Bool("v", false, "Version")
 	debugPtr := flag.Bool("d", false, "Debug flag")
+	curpartPtr := flag.String("c", "", "Current partition")
 	flag.Parse()
 	debug = *debugPtr
 	debugOverride = debug
@@ -90,10 +86,17 @@ func Run() {
 	} else {
 		log.SetLevel(log.InfoLevel)
 	}
+	curpart := *curpartPtr
 	if *versionPtr {
 		fmt.Printf("%s: %s\n", os.Args[0], Version)
 		return
 	}
+	logf, err := agentlog.Init(agentName, curpart)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer logf.Close()
+
 	if err := pidfile.CheckAndCreatePidfile(agentName); err != nil {
 		log.Fatal(err)
 	}
@@ -508,7 +511,7 @@ func handleCreate(ctx *downloaderContext, objType string,
 	// Check if we have space
 	// Update reserved space. Keep reserved until doDelete
 	// XXX RefCount -> 0 should keep it reserved.
-	kb := uint(types.RoundupToKB(config.Size))
+	kb := types.RoundupToKB(config.Size)
 	if !tryReserveSpace(ctx, kb) {
 		errString := fmt.Sprintf("Would exceed remaining space %d vs %d\n",
 			kb, ctx.globalStatus.RemainingSpace)
@@ -582,7 +585,7 @@ func handleModify(ctx *downloaderContext, key string,
 		return
 	}
 
-	log.Infof("handleModify(%v) RefCount %d to %d, Expired %v %s for %s\n",
+	log.Infof("handleModify(%v) RefCount %d to %d, Expired %v for %s\n",
 		status.Safename, status.RefCount, config.RefCount,
 		status.Expired, status.DownloadURL)
 
@@ -617,7 +620,7 @@ func doDelete(ctx *downloaderContext, key string, locDirname string,
 	deletefile(locDirname+"/pending", status)
 
 	status.State = types.INITIAL
-	deleteSpace(ctx, uint(types.RoundupToKB(status.Size)))
+	deleteSpace(ctx, types.RoundupToKB(status.Size))
 	status.Size = 0
 
 	// XXX Asymmetric; handleCreate reserved on RefCount 0. We unreserve
@@ -690,7 +693,7 @@ func downloaderInit(ctx *downloaderContext) *zedUpload.DronaCtx {
 	// We read objectDownloadDirname/* and determine how much space
 	// is used. Place in GlobalDownloadStatus. Calculate remaining space.
 	totalUsed := sizeFromDir(objectDownloadDirname)
-	kb := uint(types.RoundupToKB(totalUsed))
+	kb := types.RoundupToKB(totalUsed)
 	initSpace(ctx, kb)
 
 	// create drona interface
@@ -828,7 +831,7 @@ func sizeFromDir(dirname string) uint64 {
 	return totalUsed
 }
 
-func initSpace(ctx *downloaderContext, kb uint) {
+func initSpace(ctx *downloaderContext, kb uint64) {
 	ctx.globalStatusLock.Lock()
 	ctx.globalStatus.UsedSpace = 0
 	ctx.globalStatus.ReservedSpace = 0
@@ -847,7 +850,7 @@ func initSpace(ctx *downloaderContext, kb uint) {
 }
 
 // Returns true if there was space
-func tryReserveSpace(ctx *downloaderContext, kb uint) bool {
+func tryReserveSpace(ctx *downloaderContext, kb uint64) bool {
 	ctx.globalStatusLock.Lock()
 	if kb >= ctx.globalStatus.RemainingSpace {
 		ctx.globalStatusLock.Unlock()
@@ -865,7 +868,7 @@ func unreserveSpace(ctx *downloaderContext, status *types.DownloaderStatus) {
 	ctx.globalStatusLock.Lock()
 	ctx.globalStatus.ReservedSpace -= status.ReservedSpace
 	status.ReservedSpace = 0
-	ctx.globalStatus.UsedSpace -= uint(types.RoundupToKB(status.Size))
+	ctx.globalStatus.UsedSpace -= types.RoundupToKB(status.Size)
 	status.Size = 0
 
 	updateRemainingSpace(ctx)
@@ -874,7 +877,7 @@ func unreserveSpace(ctx *downloaderContext, status *types.DownloaderStatus) {
 	publishGlobalStatus(ctx)
 }
 
-func deleteSpace(ctx *downloaderContext, kb uint) {
+func deleteSpace(ctx *downloaderContext, kb uint64) {
 	ctx.globalStatusLock.Lock()
 	ctx.globalStatus.UsedSpace -= kb
 	updateRemainingSpace(ctx)
@@ -956,57 +959,83 @@ func downloaderSubscription(ctx *downloaderContext, objType string) *pubsub.Subs
 
 // cloud storage interface functions/APIs
 
-// XXX should we use --cacart? Would assume we know the root CA.
-// XXX Set --limit-rate 100k
-// XXX continue based on filesize with: -C -
-// Note that support for --dns-interface is not compiled in
-// Normally "ifname" is the source IP to be consistent with the S3 loop
-func doCurl(url string, ifname string, maxsize uint64, destFilename string) error {
-	cmd := "curl"
-	args := []string{}
-	maxsizeStr := strconv.FormatUint(maxsize, 10)
-	if ifname != "" {
-		args = []string{
-			"-q",
-			"-4", // XXX due to getting IPv6 ULAs and not IPv4
-			"--insecure",
-			"--retry",
-			"3",
-			"--silent",
-			"--show-error",
-			"--interface",
-			ifname,
-			"--max-filesize",
-			maxsizeStr,
-			"-o",
-			destFilename,
-			url,
-		}
-	} else {
-		args = []string{
-			"-q",
-			"-4", // XXX due to getting IPv6 ULAs and not IPv4
-			"--insecure",
-			"--retry",
-			"3",
-			"--silent",
-			"--show-error",
-			"--max-filesize",
-			maxsizeStr,
-			"-o",
-			destFilename,
-			url,
-		}
+func doHttp(ctx *downloaderContext, status *types.DownloaderStatus,
+	syncOp zedUpload.SyncOpType, serverUrl, dpath string, maxsize uint64,
+	ifname string, ipSrc net.IP, filename, locFilename string) error {
+
+	auth := &zedUpload.AuthInput{
+		AuthType: "http",
 	}
 
-	stdoutStderr, err := wrap.Command(cmd, args...).CombinedOutput()
+	trType := zedUpload.SyncHttpTr
 
+	// create Endpoint
+	dEndPoint, err := ctx.dCtx.NewSyncerDest(trType, serverUrl, dpath, auth)
 	if err != nil {
-		log.Errorln("curl failed ", err)
-	} else {
-		log.Infof("curl done: output <%s>\n", string(stdoutStderr))
+		log.Errorf("NewSyncerDest failed: %s\n", err)
+		return err
 	}
-	return err
+	proxyUrl, err := zedcloud.LookupProxy(
+		&ctx.deviceNetworkStatus, ifname, serverUrl)
+	if err == nil && proxyUrl != nil {
+		log.Infof("doHttp: Using proxy %s", proxyUrl.String())
+		dEndPoint.WithSrcIpAndProxySelection(ipSrc, proxyUrl)
+	} else {
+		dEndPoint.WithSrcIpSelection(ipSrc)
+	}
+	var respChan = make(chan *zedUpload.DronaRequest)
+
+	log.Infof("doHttp syncOp for <%s>, <%s>, <%s>\n", serverUrl, dpath,
+		filename)
+	// create Request
+	// Round up from bytes to Mbytes
+	maxMB := (maxsize + 1024*1024 - 1) / (1024 * 1024)
+	req := dEndPoint.NewRequest(syncOp, filename, locFilename, int64(maxMB), true, respChan)
+	if req == nil {
+		return errors.New("NewRequest failed")
+	}
+
+	req.Post()
+	for {
+		select {
+		case resp, ok := <-respChan:
+			if resp.IsDnUpdate() {
+				asize := resp.GetAsize()
+				osize := resp.GetOsize()
+				log.Infof("Update progress for %v: %v/%v",
+					resp.GetLocalName(), asize, osize)
+				if osize == 0 {
+					status.Progress = 0
+				} else {
+					percent := 100 * asize / osize
+					status.Progress = uint(percent)
+				}
+				publishDownloaderStatus(ctx, status)
+				continue
+			}
+			if !ok {
+				errStr := fmt.Sprintf("respChan EOF for <%s>, <%s>",
+					serverUrl, filename)
+				log.Errorln(errStr)
+				return errors.New(errStr)
+			}
+			if syncOp == zedUpload.SyncOpDownload {
+				err = resp.GetDnStatus()
+			} else {
+				_, err = resp.GetUpStatus()
+			}
+			if resp.IsError() {
+				return err
+			} else {
+				log.Infof("Done for %v: size %v/%v",
+					resp.GetLocalName(),
+					resp.GetAsize(), resp.GetOsize())
+				status.Progress = 100
+				publishDownloaderStatus(ctx, status)
+				return nil
+			}
+		}
+	}
 }
 
 func doS3(ctx *downloaderContext, status *types.DownloaderStatus,
@@ -1040,7 +1069,7 @@ func doS3(ctx *downloaderContext, status *types.DownloaderStatus,
 
 	var respChan = make(chan *zedUpload.DronaRequest)
 
-	log.Debugf("syncOp for <%s>, <%s>, <%s>\n", dpath, region, filename)
+	log.Infof("doS3 syncOp for <%s>, <%s>, <%s>\n", dpath, region, filename)
 	// create Request
 	// Round up from bytes to Mbytes
 	maxMB := (maxsize + 1024*1024 - 1) / (1024 * 1024)
@@ -1074,7 +1103,11 @@ func doS3(ctx *downloaderContext, status *types.DownloaderStatus,
 				log.Errorln(errStr)
 				return errors.New(errStr)
 			}
-			_, err = resp.GetUpStatus()
+			if syncOp == zedUpload.SyncOpDownload {
+				err = resp.GetDnStatus()
+			} else {
+				_, err = resp.GetUpStatus()
+			}
 			if resp.IsError() {
 				return err
 			} else {
@@ -1111,7 +1144,8 @@ func doSftp(ctx *downloaderContext, status *types.DownloaderStatus,
 	dEndPoint.WithSrcIpSelection(ipSrc)
 	var respChan = make(chan *zedUpload.DronaRequest)
 
-	log.Debugf("syncOp for <%s>, <%s>\n", dpath, filename)
+	log.Infof("doSftp syncOp for <%s>, <%s>, <%s>\n", serverUrl, dpath,
+		filename)
 	// create Request
 	// Round up from bytes to Mbytes
 	maxMB := (maxsize + 1024*1024 - 1) / (1024 * 1024)
@@ -1261,7 +1295,7 @@ func handleSyncOp(ctx *downloaderContext, key string,
 				return
 			}
 		case zconfig.DsType_DsSFTP.String():
-			serverUrl := strings.Split(config.DownloadURL, "/")[0]
+			serverUrl := getServerUrl(config, filename)
 			err = doSftp(ctx, status, syncOp, config.ApiKey,
 				config.Password, serverUrl, config.Dpath,
 				config.Size, ipSrc, filename, locFilename)
@@ -1284,8 +1318,9 @@ func handleSyncOp(ctx *downloaderContext, key string,
 				return
 			}
 		case zconfig.DsType_DsHttp.String(), zconfig.DsType_DsHttps.String(), "":
-			err = doCurl(config.DownloadURL, ipSrc.String(),
-				config.Size, locFilename)
+			serverUrl := getServerUrl(config, filename)
+			err = doHttp(ctx, status, syncOp, serverUrl, config.Dpath,
+				config.Size, ifname, ipSrc, filename, locFilename)
 			if err != nil {
 				log.Errorf("Source IP %s failed: %s\n",
 					ipSrc.String(), err)
@@ -1309,6 +1344,17 @@ func handleSyncOp(ctx *downloaderContext, key string,
 	log.Errorf("All source IP addresses failed. All errors:%s\n", errStr)
 	handleSyncOpResponse(ctx, config, status, locFilename,
 		key, errStr)
+}
+
+// DownloadURL format : http://<serverURL>/dpath/filename
+func getServerUrl(config types.DownloaderConfig, filename string) string {
+	if config.Dpath != "" {
+		return strings.TrimSuffix(config.DownloadURL,
+			"/"+config.Dpath+"/"+filename)
+	} else {
+		return strings.TrimSuffix(config.DownloadURL,
+			"/"+filename)
+	}
 }
 
 func handleSyncOpResponse(ctx *downloaderContext, config types.DownloaderConfig,
@@ -1373,8 +1419,15 @@ func handleDNSModify(ctxArg interface{}, key string, statusArg interface{}) {
 		log.Infof("handleDNSModify: ignoring %s\n", key)
 		return
 	}
-
 	log.Infof("handleDNSModify for %s\n", key)
+	if status.Testing {
+		log.Infof("handleDNSModify ignoring Testing\n")
+		return
+	}
+	if cmp.Equal(ctx.deviceNetworkStatus, status) {
+		log.Infof("handleDNSModify unchanged\n")
+		return
+	}
 	ctx.deviceNetworkStatus = status
 	log.Infof("handleDNSModify %d free management ports addresses; %d any\n",
 		types.CountLocalAddrFreeNoLinkLocal(ctx.deviceNetworkStatus),

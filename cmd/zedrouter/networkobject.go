@@ -9,14 +9,14 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/eriknordmark/netlink"
-	"github.com/satori/go.uuid"
-	log "github.com/sirupsen/logrus"
-	"github.com/zededa/go-provision/cast"
-	"github.com/zededa/go-provision/types"
 	"net"
 	"strconv"
 	"time"
+
+	"github.com/eriknordmark/netlink"
+	log "github.com/sirupsen/logrus"
+	"github.com/zededa/go-provision/cast"
+	"github.com/zededa/go-provision/types"
 )
 
 func handleNetworkObjectModify(ctxArg interface{}, key string, configArg interface{}) {
@@ -45,8 +45,10 @@ func handleNetworkObjectCreate(ctx *zedrouterContext, key string, config types.N
 
 	status := types.NetworkObjectStatus{
 		NetworkObjectConfig: config,
-		IPAssignments:       make(map[string]net.IP),
-		DnsNameToIPList:     config.DnsNameToIPList,
+		NetworkInstanceInfo: types.NetworkInstanceInfo{
+			IPAssignments: make(map[string]net.IP),
+		},
+		DnsNameToIPList: config.DnsNameToIPList,
 	}
 	status.PendingAdd = true
 	publishNetworkObjectStatus(ctx, &status)
@@ -95,6 +97,8 @@ func doNetworkCreate(ctx *zedrouterContext, config types.NetworkObjectConfig,
 	Ipv4Eid := false
 	// Check for valid types
 	switch config.Type {
+	case types.NT_NOOP:
+		// Nothing to do
 	case types.NT_IPV6:
 		// Nothing to do
 	case types.NT_IPV4:
@@ -221,10 +225,9 @@ func doNetworkCreate(ctx *zedrouterContext, config types.NetworkObjectConfig,
 		}
 	}
 
-	// XXX mov this before set??
 	// Create a hosts directory for the new bridge
 	// Directory is /var/run/zedrouter/hosts.${BRIDGENAME}
-	hostsDirpath := globalRunDirname + "/hosts." + bridgeName
+	hostsDirpath := runDirname + "/hosts." + bridgeName
 	deleteHostsConfiglet(hostsDirpath, false)
 	createHostsConfiglet(hostsDirpath,
 		status.DnsNameToIPList)
@@ -237,7 +240,7 @@ func doNetworkCreate(ctx *zedrouterContext, config types.NetworkObjectConfig,
 
 	// Start clean
 	deleteDnsmasqConfiglet(bridgeName)
-	stopDnsmasq(bridgeName, false)
+	stopDnsmasq(bridgeName, false, false)
 
 	if status.BridgeIPAddr != "" {
 		createDnsmasqConfiglet(bridgeName, status.BridgeIPAddr, &config,
@@ -431,13 +434,14 @@ func lookupOrAllocateIPv4(ctx *zedrouterContext,
 		status.Key(), status.Dhcp, status.BridgeName,
 		status.Subnet, status.DhcpRange.Start, status.DhcpRange.End)
 
-	if status.Dhcp == types.DT_PASSTHROUGH {
+	if status.Dhcp == types.DT_NONE {
 		// XXX do we have a local IP? If so caller would have found it
 		// Might appear later
 		return "", nil
 	}
 
-	if status.Dhcp != types.DT_SERVER {
+	// XXX fix - this will go away with NetworkObjectConfig going away
+	if status.Dhcp != types.DT_Deprecated {
 		errStr := fmt.Sprintf("Unsupported DHCP type %d for %s",
 			status.Dhcp, status.Key())
 		return "", errors.New(errStr)
@@ -588,9 +592,9 @@ func updateBridgeIPAddr(ctx *zedrouterContext, status *types.NetworkObjectStatus
 			status.Key())
 		bridgeName := status.BridgeName
 		deleteDnsmasqConfiglet(bridgeName)
-		stopDnsmasq(bridgeName, false)
+		stopDnsmasq(bridgeName, false, false)
 
-		hostsDirpath := globalRunDirname + "/hosts." + bridgeName
+		hostsDirpath := runDirname + "/hosts." + bridgeName
 		// XXX arbitrary name "router"!!
 		addToHostsConfiglet(hostsDirpath, "router",
 			[]string{status.BridgeIPAddr})
@@ -620,7 +624,7 @@ func doNetworkModify(ctx *zedrouterContext, config types.NetworkObjectConfig,
 
 	bridgeName := status.BridgeName
 	if bridgeName != "" && status.BridgeIPAddr != "" {
-		hostsDirpath := globalRunDirname + "/hosts." + bridgeName
+		hostsDirpath := runDirname + "/hosts." + bridgeName
 		updateHostsConfiglet(hostsDirpath, status.DnsNameToIPList,
 			config.DnsNameToIPList)
 
@@ -714,7 +718,7 @@ func doNetworkDelete(ctx *zedrouterContext,
 	netlink.LinkDel(link)
 
 	deleteDnsmasqConfiglet(bridgeName)
-	stopDnsmasq(bridgeName, true)
+	stopDnsmasq(bridgeName, true, false)
 
 	// For IPv6 and LISP, but LISP will become a service
 	isIPv6 := false
@@ -733,62 +737,29 @@ func doNetworkDelete(ctx *zedrouterContext,
 		deleteRadvdConfiglet(cfgPathname)
 	}
 
-	status.BridgeName = ""
-	status.BridgeNum = 0
-	bridgeNumFree(ctx, status.UUID)
-}
-
-func findVifInBridge(status *types.NetworkObjectStatus, vifName string) bool {
-	for _, vif := range status.Vifs {
-		if vif.Name == vifName {
-			return true
-		}
+	if status.BridgeNum != 0 {
+		status.BridgeName = ""
+		status.BridgeNum = 0
+		bridgeNumFree(ctx, status.UUID)
 	}
-	return false
-}
-
-func addVifToBridge(status *types.NetworkObjectStatus, vifName string,
-	appMac string, appID uuid.UUID) {
-
-	log.Infof("addVifToBridge(%s, %s, %s, %s)\n",
-		status.BridgeName, vifName, appMac, appID.String())
-	if findVifInBridge(status, vifName) {
-		log.Errorf("addVifToBridge(%s, %s) exists\n",
-			status.BridgeName, vifName)
-		return
-	}
-	info := types.VifNameMac{
-		Name:    vifName,
-		MacAddr: appMac,
-		AppID:   appID,
-	}
-	status.Vifs = append(status.Vifs, info)
-}
-
-func removeVifFromBridge(status *types.NetworkObjectStatus, vifName string) {
-
-	log.Infof("removeVifFromBridge(%s, %s)\n", status.BridgeName, vifName)
-	if !findVifInBridge(status, vifName) {
-		log.Errorf("XXX removeVifFromBridge(%s, %s) not there\n",
-			status.BridgeName, vifName)
-		return
-	}
-	var vifs []types.VifNameMac
-	for _, vif := range status.Vifs {
-		if vif.Name != vifName {
-			vifs = append(vifs, vif)
-		}
-	}
-	status.Vifs = vifs
 }
 
 func vifNameToBridgeName(ctx *zedrouterContext, vifName string) string {
 
-	pub := ctx.pubNetworkObjectStatus
-	items := pub.GetAll()
-	for _, st := range items {
+	pub := ctx.pubNetworkInstanceStatus
+	instanceItems := pub.GetAll()
+	for _, st := range instanceItems {
+		status := cast.CastNetworkInstanceStatus(st)
+		if status.IsVifInBridge(vifName) {
+			return status.BridgeName
+		}
+	}
+
+	pub = ctx.pubNetworkObjectStatus
+	objectItems := pub.GetAll()
+	for _, st := range objectItems {
 		status := cast.CastNetworkObjectStatus(st)
-		if findVifInBridge(&status, vifName) {
+		if status.IsVifInBridge(vifName) {
 			return status.BridgeName
 		}
 	}

@@ -6,13 +6,14 @@
 package zedagent
 
 import (
+	"strings"
+
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
 	log "github.com/sirupsen/logrus"
 	"github.com/zededa/api/zmet"
 	"github.com/zededa/go-provision/cast"
 	"github.com/zededa/go-provision/types"
-	"strings"
 )
 
 func handleNetworkInstanceModify(ctxArg interface{}, key string, statusArg interface{}) {
@@ -27,13 +28,7 @@ func handleNetworkInstanceModify(ctxArg interface{}, key string, statusArg inter
 		log.Errorf("Received NetworkInstance error %s\n",
 			status.Error)
 	}
-	switch status.Type {
-	case types.NetworkInstanceTypeMesh: // XXX any subtype?
-		handleNetworkLispInstanceStatusModify(ctx, status)
-	case types.NetworkInstanceTypeCloud:
-		handleNetworkVpnInstanceStatusModify(ctx, status)
-	default:
-	}
+	prepareAndPublishNetworkInstanceInfoMsg(ctx, status, false)
 	log.Infof("handleNetworkInstanceModify(%s) done\n", key)
 }
 
@@ -48,26 +43,11 @@ func handleNetworkInstanceDelete(ctxArg interface{}, key string,
 		return
 	}
 	ctx := ctxArg.(*zedagentContext)
-	switch status.Type {
-	case types.NetworkInstanceTypeMesh: // XXX any subtype?
-		handleNetworkLispInstanceStatusDelete(ctx, status)
-	case types.NetworkInstanceTypeCloud:
-		handleNetworkVpnInstanceStatusDelete(ctx, status)
-	default:
-	}
+	prepareAndPublishNetworkInstanceInfoMsg(ctx, status, true)
 	log.Infof("handleNetworkInstanceDelete(%s) done\n", key)
 }
 
-func handleNetworkVpnInstanceStatusModify(ctx *zedagentContext,
-	status types.NetworkInstanceStatus) {
-	prepareVpnInstanceInfoMsg(ctx, status, false)
-}
-
-func handleNetworkVpnInstanceStatusDelete(ctx *zedagentContext, status types.NetworkInstanceStatus) {
-	prepareVpnInstanceInfoMsg(ctx, status, true)
-}
-
-func prepareAndPublishLispInstanceInfoMsg(ctx *zedagentContext,
+func prepareAndPublishNetworkInstanceInfoMsg(ctx *zedagentContext,
 	status types.NetworkInstanceStatus, deleted bool) {
 
 	infoMsg := &zmet.ZInfoMsg{}
@@ -83,8 +63,14 @@ func prepareAndPublishLispInstanceInfoMsg(ctx *zedagentContext,
 	info.Displayname = status.DisplayName
 	info.InstType = uint32(status.Type)
 
-	// Always need a lispinfo to satisfy oneof
-	lispInfo := new(zmet.ZInfoLisp)
+	if !status.ErrorTime.IsZero() {
+		errInfo := new(zmet.ErrorInfo)
+		errInfo.Description = status.Error
+		errTime, _ := ptypes.TimestampProto(status.ErrorTime)
+		errInfo.Timestamp = errTime
+		info.NetworkErr = append(info.NetworkErr, errInfo)
+	}
+
 	if deleted {
 		// XXX When a network instance is deleted it is ideal to
 		// send a flag such as deleted/gone inside
@@ -121,27 +107,27 @@ func prepareAndPublishLispInstanceInfoMsg(ctx *zedagentContext,
 		// For now we just send an empty lispInfo to indicate deletion to cloud.
 		// It can't be omitted since protobuf requires something to satisfy
 		// the oneof.
-
-		lispStatus := status.LispInfoStatus
-		if lispStatus != nil {
-			fillLispInfo(lispInfo, lispStatus)
+		if status.LispInfoStatus != nil {
+			fillLispInfo(info, status.LispInfoStatus)
 		}
-	}
-
-	info.InfoContent = new(zmet.ZInfoNetworkInstance_Linfo)
-	if x, ok := info.GetInfoContent().(*zmet.ZInfoNetworkInstance_Linfo); ok {
-		x.Linfo = lispInfo
+		// fill Vpn info
+		if status.VpnStatus != nil {
+			fillVpnInfo(info, status.VpnStatus)
+		}
 	}
 
 	infoMsg.InfoContent = new(zmet.ZInfoMsg_Niinfo)
 	if x, ok := infoMsg.GetInfoContent().(*zmet.ZInfoMsg_Niinfo); ok {
 		x.Niinfo = info
 	}
-	log.Debugf("Publish LispInfo message to zedcloud: %v\n", infoMsg)
+	log.Debugf("Publish NetworkInstance Info message to zedcloud: %v\n",
+		infoMsg)
 	publishInfo(ctx, uuid, infoMsg)
 }
 
-func fillLispInfo(lispInfo *zmet.ZInfoLisp, lispStatus *types.LispInfoStatus) {
+func fillLispInfo(info *zmet.ZInfoNetworkInstance, lispStatus *types.LispInfoStatus) {
+
+	lispInfo := new(zmet.ZInfoLisp)
 
 	lispInfo.ItrCryptoPort = lispStatus.ItrCryptoPort
 	lispInfo.EtrNatPort = lispStatus.EtrNatPort
@@ -184,47 +170,19 @@ func fillLispInfo(lispInfo *zmet.ZInfoLisp, lispStatus *types.LispInfoStatus) {
 		}
 		lispInfo.DecapKeys = append(lispInfo.DecapKeys, decap)
 	}
-}
 
-func handleNetworkLispInstanceStatusModify(ctx *zedagentContext, status types.NetworkInstanceStatus) {
-	prepareAndPublishLispInstanceInfoMsg(ctx, status, false)
-}
-
-func handleNetworkLispInstanceStatusDelete(ctx *zedagentContext, status types.NetworkInstanceStatus) {
-	prepareAndPublishLispInstanceInfoMsg(ctx, status, true)
-}
-
-func prepareVpnInstanceInfoMsg(ctx *zedagentContext, status types.NetworkInstanceStatus, delete bool) {
-	if status.VpnStatus == nil {
-		return
+	info.InfoContent = new(zmet.ZInfoNetworkInstance_Linfo)
+	if x, ok := info.GetInfoContent().(*zmet.ZInfoNetworkInstance_Linfo); ok {
+		x.Linfo = lispInfo
 	}
-	infoMsg := &zmet.ZInfoMsg{}
-	infoType := new(zmet.ZInfoTypes)
-	*infoType = zmet.ZInfoTypes_ZiNetworkInstance
-	infoMsg.DevId = *proto.String(zcdevUUID.String())
-	infoMsg.Ztype = *infoType
+}
 
-	uuid := status.Key()
-	vpnStatus := status.VpnStatus
-	info := new(zmet.ZInfoNetworkInstance)
-	info.NetworkID = uuid
-	info.NetworkVersion = status.UUIDandVersion.Version
-	info.Displayname = status.DisplayName
-	info.InstType = uint32(status.Type)
-	info.Activated = status.Activated
+func fillVpnInfo(info *zmet.ZInfoNetworkInstance, vpnStatus *types.ServiceVpnStatus) {
+
 	info.SoftwareList = new(zmet.ZInfoSW)
 	info.SoftwareList.SwVersion = vpnStatus.Version
-	info.Activated = status.Activated
 	upTime, _ := ptypes.TimestampProto(vpnStatus.UpTime)
 	info.UpTimeStamp = upTime
-
-	if !status.ErrorTime.IsZero() {
-		errInfo := new(zmet.ErrorInfo)
-		errInfo.Description = status.Error
-		errTime, _ := ptypes.TimestampProto(status.ErrorTime)
-		errInfo.Timestamp = errTime
-		info.NetworkErr = append(info.NetworkErr, errInfo)
-	}
 
 	vpnInfo := new(zmet.ZInfoVpn)
 	vpnInfo.PolicyBased = vpnStatus.PolicyBased
@@ -241,13 +199,6 @@ func prepareVpnInstanceInfoMsg(ctx *zedagentContext, status types.NetworkInstanc
 		if x, ok := info.GetInfoContent().(*zmet.ZInfoNetworkInstance_Vinfo); ok {
 			x.Vinfo = vpnInfo
 		}
-
-		// prapare the final stuff
-		infoMsg.InfoContent = new(zmet.ZInfoMsg_Niinfo)
-		if x, ok := infoMsg.GetInfoContent().(*zmet.ZInfoMsg_Niinfo); ok {
-			x.Niinfo = info
-		}
-		publishInfo(ctx, uuid, infoMsg)
 		return
 	}
 
@@ -275,13 +226,6 @@ func prepareVpnInstanceInfoMsg(ctx *zedagentContext, status types.NetworkInstanc
 	if x, ok := info.GetInfoContent().(*zmet.ZInfoNetworkInstance_Vinfo); ok {
 		x.Vinfo = vpnInfo
 	}
-
-	// prepare the final stuff
-	infoMsg.InfoContent = new(zmet.ZInfoMsg_Niinfo)
-	if x, ok := infoMsg.GetInfoContent().(*zmet.ZInfoMsg_Niinfo); ok {
-		x.Niinfo = info
-	}
-	publishInfo(ctx, uuid, infoMsg)
 }
 
 func handleNetworkInstanceMetricsModify(ctxArg interface{}, key string,
@@ -340,9 +284,42 @@ func protoEncodeNetworkInstanceMetricProto(status types.NetworkInstanceMetrics) 
 		log.Debugf("Publish Lisp Instance Metric to Zedcloud %v\n",
 			metric)
 		protoEncodeLispInstanceMetric(status, metric)
+	default:
+		protoEncodeGenericInstanceMetric(status, metric)
 	}
 
 	return metric
+}
+
+func protoEncodeGenericInstanceMetric(status types.NetworkInstanceMetrics,
+	metric *zmet.ZMetricNetworkInstance) {
+	networkStats := new(zmet.ZMetricNetworkStats)
+	rxStats := new(zmet.NetworkStats)
+	txStats := new(zmet.NetworkStats)
+	netMetric := status.NetworkMetrics.MetricList[0]
+	rxStats.TotalPackets = netMetric.RxPkts
+	rxStats.TotalBytes = netMetric.RxBytes
+	rxStats.Errors = netMetric.RxErrors
+	// Add all types of Rx drops
+	var drops uint64 = 0
+	drops += netMetric.RxDrops
+	drops += netMetric.RxAclDrops
+	drops += netMetric.RxAclRateLimitDrops
+	rxStats.Drops = drops
+
+	txStats.TotalPackets = netMetric.TxPkts
+	txStats.TotalBytes = netMetric.TxBytes
+	txStats.Errors = netMetric.TxErrors
+	// Add all types of Tx drops
+	drops = 0
+	drops += netMetric.TxDrops
+	drops += netMetric.TxAclDrops
+	drops += netMetric.TxAclRateLimitDrops
+	txStats.Drops = drops
+
+	networkStats.Rx = rxStats
+	networkStats.Tx = txStats
+	metric.NetworkStats = networkStats
 }
 
 func protoEncodeLispInstanceMetric(status types.NetworkInstanceMetrics,
@@ -350,6 +327,7 @@ func protoEncodeLispInstanceMetric(status types.NetworkInstanceMetrics,
 	if status.LispMetrics == nil {
 		return
 	}
+	protoEncodeGenericInstanceMetric(status, metric)
 	metrics := status.LispMetrics
 
 	lispGlobalMetric := new(zmet.ZMetricLispGlobal)
@@ -535,6 +513,7 @@ func protoEncodeVpnInstanceMetric(metrics types.NetworkInstanceMetrics,
 	if metrics.VpnMetrics == nil {
 		return
 	}
+	protoEncodeGenericInstanceMetric(metrics, instanceMetrics)
 
 	stats := metrics.VpnMetrics
 	vpnMetric := new(zmet.ZMetricVpn)
