@@ -97,6 +97,8 @@ func doNetworkCreate(ctx *zedrouterContext, config types.NetworkObjectConfig,
 	Ipv4Eid := false
 	// Check for valid types
 	switch config.Type {
+	case types.NT_NOOP:
+		// Nothing to do
 	case types.NT_IPV6:
 		// Nothing to do
 	case types.NT_IPV4:
@@ -223,10 +225,9 @@ func doNetworkCreate(ctx *zedrouterContext, config types.NetworkObjectConfig,
 		}
 	}
 
-	// XXX mov this before set??
 	// Create a hosts directory for the new bridge
 	// Directory is /var/run/zedrouter/hosts.${BRIDGENAME}
-	hostsDirpath := globalRunDirname + "/hosts." + bridgeName
+	hostsDirpath := runDirname + "/hosts." + bridgeName
 	deleteHostsConfiglet(hostsDirpath, false)
 	createHostsConfiglet(hostsDirpath,
 		status.DnsNameToIPList)
@@ -433,13 +434,14 @@ func lookupOrAllocateIPv4(ctx *zedrouterContext,
 		status.Key(), status.Dhcp, status.BridgeName,
 		status.Subnet, status.DhcpRange.Start, status.DhcpRange.End)
 
-	if status.Dhcp == types.DT_PASSTHROUGH {
+	if status.Dhcp == types.DT_NONE {
 		// XXX do we have a local IP? If so caller would have found it
 		// Might appear later
 		return "", nil
 	}
 
-	if status.Dhcp != types.DT_SERVER {
+	// XXX fix - this will go away with NetworkObjectConfig going away
+	if status.Dhcp != types.DT_Deprecated {
 		errStr := fmt.Sprintf("Unsupported DHCP type %d for %s",
 			status.Dhcp, status.Key())
 		return "", errors.New(errStr)
@@ -592,7 +594,7 @@ func updateBridgeIPAddr(ctx *zedrouterContext, status *types.NetworkObjectStatus
 		deleteDnsmasqConfiglet(bridgeName)
 		stopDnsmasq(bridgeName, false, false)
 
-		hostsDirpath := globalRunDirname + "/hosts." + bridgeName
+		hostsDirpath := runDirname + "/hosts." + bridgeName
 		// XXX arbitrary name "router"!!
 		addToHostsConfiglet(hostsDirpath, "router",
 			[]string{status.BridgeIPAddr})
@@ -622,7 +624,7 @@ func doNetworkModify(ctx *zedrouterContext, config types.NetworkObjectConfig,
 
 	bridgeName := status.BridgeName
 	if bridgeName != "" && status.BridgeIPAddr != "" {
-		hostsDirpath := globalRunDirname + "/hosts." + bridgeName
+		hostsDirpath := runDirname + "/hosts." + bridgeName
 		updateHostsConfiglet(hostsDirpath, status.DnsNameToIPList,
 			config.DnsNameToIPList)
 
@@ -735,9 +737,11 @@ func doNetworkDelete(ctx *zedrouterContext,
 		deleteRadvdConfiglet(cfgPathname)
 	}
 
-	status.BridgeName = ""
-	status.BridgeNum = 0
-	bridgeNumFree(ctx, status.UUID)
+	if status.BridgeNum != 0 {
+		status.BridgeName = ""
+		status.BridgeNum = 0
+		bridgeNumFree(ctx, status.UUID)
+	}
 }
 
 func vifNameToBridgeName(ctx *zedrouterContext, vifName string) string {

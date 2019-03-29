@@ -7,16 +7,18 @@ package zedrouter
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"strconv"
 	"strings"
-	"syscall"
-	"time"
 
 	"github.com/eriknordmark/netlink"
 	log "github.com/sirupsen/logrus"
 	"github.com/zededa/go-provision/cast"
+	"github.com/zededa/go-provision/devicenetwork"
 	"github.com/zededa/go-provision/iptables"
 	"github.com/zededa/go-provision/types"
 )
@@ -64,27 +66,65 @@ func checkPortAvailableForNetworkInstance(
 	log.Infof("NetworkInstance(%s-%s), port: %s\n",
 		status.DisplayName, status.UUID, status.Port)
 
-	if allowSharedPort(status) && isSharedPortLabel(status.Port) {
-		log.Infof("Mgmt port - allowSharedPort: %t, isSharedPortLabel:%t",
-			allowSharedPort(status), isSharedPortLabel(status.Port))
-		return nil
+	if allowSharedPort(status) {
+		if isSharedPortLabel(status.Port) {
+			log.Infof("allowSharedPort: %t, isSharedPortLabel:%t",
+				allowSharedPort(status), isSharedPortLabel(status.Port))
+			return nil
+		}
+	} else {
+		if isSharedPortLabel(status.Port) {
+			errStr := fmt.Sprintf("SharedPortLabel %s not allowed for exclusive network instance %s-%s\n",
+				status.Port, status.Key(), status.DisplayName)
+			log.Errorln(errStr)
+			return errors.New(errStr)
+		}
 	}
-	// XXX are we checking allowPortSharing and the status of the port
-	// somewhere? Doesn't look like we do.
-
 	portStatus := ctx.deviceNetworkStatus.GetPortByName(status.Port)
 	if portStatus == nil {
 		// XXX Fallback until we have complete Name support in UI
 		portStatus = ctx.deviceNetworkStatus.GetPortByIfName(status.Port)
 		if portStatus == nil {
-			errStr := fmt.Sprintf("PortStatus for %s not found\n",
-				status.Port)
+			errStr := fmt.Sprintf("PortStatus for %s not found for network instance %s-%s\n",
+				status.Port, status.Key(), status.DisplayName)
 			return errors.New(errStr)
 		}
 	}
 
-	switch status.Type {
-	case types.NetworkInstanceTypeSwitch:
+	if allowSharedPort(status) {
+		// Make sure it is configured for IP or will be
+		if portStatus.Dhcp == types.DT_NONE {
+			errStr := fmt.Sprintf("Port %s not configured for shared use. "+
+				"Cannot be used by Switch Network Instance %s-%s\n",
+				status.Port, status.UUID, status.DisplayName)
+			return errors.New(errStr)
+		}
+		// Make sure it is not used by a NetworkInstance of type Switch
+		for _, iterStatusEntry := range ctx.networkInstanceStatusMap {
+			if status == iterStatusEntry {
+				continue
+			}
+			if !iterStatusEntry.IsUsingPort(status.Port) {
+				continue
+			}
+			if !allowSharedPort(iterStatusEntry) {
+				errStr := fmt.Sprintf("Port %s already used by "+
+					"Switch NetworkInstance %s-%s. It cannot be used by "+
+					"any other Network Instance such as %s-%s\n",
+					status.Port, iterStatusEntry.UUID,
+					iterStatusEntry.DisplayName,
+					status.UUID, status.DisplayName)
+				return errors.New(errStr)
+			}
+		}
+	} else {
+		// Make sure it will not be configured for IP
+		if portStatus.Dhcp != types.DT_NONE {
+			errStr := fmt.Sprintf("Port %s configured for shared use. "+
+				"Cannot be used by Switch Network Instance %s-%s\n",
+				status.Port, status.UUID, status.DisplayName)
+			return errors.New(errStr)
+		}
 		// Make sure it is not used by any other NetworkInstance
 		for _, iterStatusEntry := range ctx.networkInstanceStatusMap {
 			if status == iterStatusEntry {
@@ -98,46 +138,38 @@ func checkPortAvailableForNetworkInstance(
 				return errors.New(errStr)
 			}
 		}
-	case types.NetworkInstanceTypeLocal:
-		// Make sure it is not used by a NetworkInstance of type Switch
-		for _, iterStatusEntry := range ctx.networkInstanceStatusMap {
-			if status == iterStatusEntry {
-				continue
-			}
-			if iterStatusEntry.IsUsingPort(status.Port) {
-				if iterStatusEntry.Type == types.NetworkInstanceTypeSwitch {
-					errStr := fmt.Sprintf("Port %s already used by "+
-						"Switch NetworkInstance %s-%s. It cannot be used by "+
-						"any other Network Instance\n",
-						status.Port, iterStatusEntry.UUID, iterStatusEntry.DisplayName)
-					return errors.New(errStr)
-				}
-				// Still iterate through all NetworkInstances. This particular one
-				//	may have errored out or inactive. Make sure no Switch NI is
-				//  using the Port.
-			}
-		}
-	default:
 	}
 	return nil
 }
 
+func isOverlay(netType types.NetworkInstanceType) bool {
+	if netType == types.NetworkInstanceTypeMesh {
+		return true
+	}
+	return false
+}
+
 // doCreateBridge
 //		returns (error, bridgeMac-string)
-func doCreateBridge(bridgeName string, bridgeNum int) (error, string) {
+func doCreateBridge(bridgeName string, bridgeNum int,
+	status *types.NetworkInstanceStatus) (error, string) {
+	Ipv4Eid := false
+	if isOverlay(status.Type) && status.Subnet.IP != nil {
+		Ipv4Eid = (status.Subnet.IP.To4() != nil)
+		status.Ipv4Eid = Ipv4Eid
+	}
+
 	// Start clean
+	// delete the bridge
 	attrs := netlink.NewLinkAttrs()
 	attrs.Name = bridgeName
 	link := &netlink.Bridge{LinkAttrs: attrs}
 	netlink.LinkDel(link)
 
-	// Delete the sister dummy interface also
-	sattrs := netlink.NewLinkAttrs()
-	// "s" for sister
-	dummyIntfName := "s" + bridgeName
-	sattrs.Name = dummyIntfName
-	sLink := &netlink.Dummy{LinkAttrs: sattrs}
-	netlink.LinkDel(sLink)
+	// Delete the sister dummy interface also, if any
+	if status.HasEncap {
+		deleteDummyInterface(status)
+	}
 
 	//    ip link add ${bridgeName} type bridge
 	attrs = netlink.NewLinkAttrs()
@@ -161,7 +193,15 @@ func doCreateBridge(bridgeName string, bridgeNum int) (error, string) {
 		return errors.New(errStr), ""
 	}
 
-	return nil, bridgeMac
+	// For the case of Lisp/Vpn networks, we route all traffic coming from
+	// the bridge to a dummy interface with MTU 1280. This is done to
+	// get bigger packets fragmented and also to have the kernel generate
+	// ICMP packet too big for path MTU discovery before being captured by
+	// lisp dataplane/other network elements
+	if status.HasEncap {
+		err = createDummyInterface(status)
+	}
+	return err, bridgeMac
 }
 
 func networkInstanceBridgeDelete(
@@ -170,30 +210,112 @@ func networkInstanceBridgeDelete(
 	// When bridge and sister interfaces are deleted, code in pbr.go
 	// takes care of deleting the corresponding route tables and ip rules.
 
-	bridgeName := status.BridgeName
-	switch status.IpType {
-	case types.AddressTypeCryptoIPV4:
-		fallthrough
-	case types.AddressTypeCryptoIPV6:
-		// "s" for sister
-		dummyIntfName := "s" + bridgeName
-
-		// Delete the sister dummy interface also
-		sattrs := netlink.NewLinkAttrs()
-		sattrs.Name = dummyIntfName
-		sLink := &netlink.Dummy{LinkAttrs: sattrs}
-		netlink.LinkDel(sLink)
+	// delete the sister interface
+	if status.HasEncap {
+		deleteDummyInterface(status)
 	}
 
 	attrs := netlink.NewLinkAttrs()
-	attrs.Name = bridgeName
+	attrs.Name = status.BridgeName
 	link := &netlink.Bridge{LinkAttrs: attrs}
 	// Remove link and associated addresses
 	netlink.LinkDel(link)
 
-	status.BridgeName = ""
-	status.BridgeNum = 0
-	bridgeNumFree(ctx, status.UUID)
+	if status.BridgeNum != 0 {
+		status.BridgeName = ""
+		status.BridgeNum = 0
+		bridgeNumFree(ctx, status.UUID)
+	}
+}
+
+func isNetworkInstanceCloud(status *types.NetworkInstanceStatus) bool {
+	if status.Type == types.NetworkInstanceTypeCloud {
+		return true
+	}
+	return false
+}
+
+func createDummyInterface(status *types.NetworkInstanceStatus) error {
+
+	bridgeName := status.BridgeName
+	bridgeNum := status.BridgeNum
+
+	sattrs := netlink.NewLinkAttrs()
+	// "s" for sister
+	dummyIntfName := "s" + bridgeName
+	sattrs.Name = dummyIntfName
+
+	slinkMac := fmt.Sprintf("00:16:3e:06:01:%02x", bridgeNum)
+	hw, err := net.ParseMAC(slinkMac)
+	if err != nil {
+		log.Fatal("doNetworkCreate: ParseMAC failed: ", slinkMac, err)
+	}
+	sattrs.HardwareAddr = hw
+	// 1280 gives us a comfortable buffer for lisp encapsulation
+	sattrs.MTU = 1280
+	slink := &netlink.Dummy{LinkAttrs: sattrs}
+	if err := netlink.LinkAdd(slink); err != nil {
+		errStr := fmt.Sprintf("doNetworkCreate: LinkAdd on %s failed: %s",
+			dummyIntfName, err)
+		return errors.New(errStr)
+	}
+
+	// ip link set ${dummy-interface} up
+	if err := netlink.LinkSetUp(slink); err != nil {
+		errStr := fmt.Sprintf("doNetworkCreate: LinkSetUp on %s failed: %s",
+			dummyIntfName, err)
+		return errors.New(errStr)
+	}
+
+	// Turn ARP off on our dummy link
+	if err := netlink.LinkSetARPOff(slink); err != nil {
+		errStr := fmt.Sprintf("doNetworkCreate: LinkSetARPOff on %s failed: %s",
+			dummyIntfName, err)
+		return errors.New(errStr)
+	}
+
+	var destAddr string
+	if status.Ipv4Eid || isNetworkInstanceCloud(status) {
+		destAddr = status.Subnet.String()
+	} else {
+		destAddr = "fd00::/8"
+	}
+	_, ipnet, err := net.ParseCIDR(destAddr)
+	if err != nil {
+		errStr := fmt.Sprintf("doNetworkCreate: ParseCIDR of %s failed",
+			status.Subnet.String())
+		return errors.New(errStr)
+	}
+
+	// get bridge index
+	attrs := netlink.NewLinkAttrs()
+	attrs.Name = bridgeName
+	link := &netlink.Bridge{LinkAttrs: attrs}
+	iifIndex := link.Attrs().Index
+
+	// get link index
+	oifIndex := slink.Attrs().Index
+	err = AddOverlayRuleAndRoute(bridgeName, iifIndex, oifIndex, ipnet)
+	if err != nil {
+		errStr := fmt.Sprintf(
+			"doNetworkCreate: Lisp IP rule and route addition failed for bridge %s: %s",
+			bridgeName, err)
+		return errors.New(errStr)
+	}
+	return nil
+}
+
+func deleteDummyInterface(status *types.NetworkInstanceStatus) {
+
+	bridgeName := status.BridgeName
+	// "s" for sister
+	dummyIntfName := "s" + bridgeName
+
+	// Delete the sister dummy interface also
+	sattrs := netlink.NewLinkAttrs()
+	sattrs.Name = dummyIntfName
+	sLink := &netlink.Dummy{LinkAttrs: sattrs}
+	netlink.LinkDel(sLink)
 }
 
 func doNetworkInstanceBridgeAclsDelete(
@@ -209,6 +331,9 @@ func doNetworkInstanceBridgeAclsDelete(
 			if olStatus.UsesNetworkInstance && olStatus.Network != status.UUID {
 				continue
 			}
+			if olStatus.Bridge == "" {
+				continue
+			}
 			log.Infof("NetworkInstance - deleting Acls for OL Interface(%s)",
 				olStatus.Name)
 			err := deleteACLConfiglet(olStatus.Bridge,
@@ -222,6 +347,9 @@ func doNetworkInstanceBridgeAclsDelete(
 		}
 		for _, ulStatus := range appNetStatus.UnderlayNetworkList {
 			if ulStatus.UsesNetworkInstance && ulStatus.Network != status.UUID {
+				continue
+			}
+			if ulStatus.Bridge == "" {
 				continue
 			}
 			log.Infof("NetworkInstance - deleting Acls for UL Interface(%s)",
@@ -297,8 +425,7 @@ func handleNetworkInstanceCreate(
 		err := doNetworkInstanceActivate(ctx, &status)
 		if err != nil {
 			log.Errorf("doNetworkInstanceActivate(%s) failed: %s\n", key, err)
-			status.Error = err.Error()
-			status.ErrorTime = time.Now()
+			status.SetError(err)
 		} else {
 			log.Infof("Activated network instance %s %s", status.UUID, status.DisplayName)
 			status.Activated = true
@@ -352,15 +479,15 @@ func doNetworkInstanceCreate(ctx *zedrouterContext,
 	bridgeName := fmt.Sprintf("bn%d", bridgeNum)
 	status.BridgeNum = bridgeNum
 	status.BridgeName = bridgeName
-	publishNetworkInstanceStatus(ctx, status)
 
 	// Create bridge
 	var err error
 	bridgeMac := ""
-	if err, bridgeMac = doCreateBridge(bridgeName, bridgeNum); err != nil {
+	if err, bridgeMac = doCreateBridge(bridgeName, bridgeNum, status); err != nil {
 		return err
 	}
 	status.BridgeMac = bridgeMac
+	publishNetworkInstanceStatus(ctx, status)
 
 	log.Infof("bridge created. BridgeMac: %s\n", bridgeMac)
 
@@ -369,10 +496,9 @@ func doNetworkInstanceCreate(ctx *zedrouterContext,
 	}
 	log.Infof("IpAddress set for bridge\n")
 
-	// XXX mov this before set??
 	// Create a hosts directory for the new bridge
 	// Directory is /var/run/zedrouter/hosts.${BRIDGENAME}
-	hostsDirpath := globalRunDirname + "/hosts." + bridgeName
+	hostsDirpath := runDirname + "/hosts." + bridgeName
 	deleteHostsConfiglet(hostsDirpath, false)
 	createHostsConfiglet(hostsDirpath,
 		status.DnsNameToIPList)
@@ -400,6 +526,15 @@ func doNetworkInstanceCreate(ctx *zedrouterContext,
 		// radvd preference if isolated local network?
 		restartRadvdWithNewConfig(bridgeName)
 	}
+
+	switch status.Type {
+	case types.NetworkInstanceTypeCloud:
+		err := vpnCreateForNetworkInstance(ctx, status)
+		if err != nil {
+			return err
+		}
+	default:
+	}
 	return nil
 }
 
@@ -413,19 +548,28 @@ func doNetworkInstanceSanityCheck(
 	//  Check NetworkInstanceType
 	switch status.Type {
 	case types.NetworkInstanceTypeLocal:
+		// Do nothing
 	case types.NetworkInstanceTypeSwitch:
+		// Do nothing
+	case types.NetworkInstanceTypeCloud:
+		// Do nothing
+	case types.NetworkInstanceTypeMesh:
+		// Do nothing
 	default:
 		err := fmt.Sprintf("Instance type %d not supported", status.Type)
 		return errors.New(err)
 	}
 
 	if err := checkPortAvailableForNetworkInstance(ctx, status); err != nil {
+		log.Errorf("checkPortAvailableForNetworkInstance failed: Port: %s, err:%s",
+			status.Port, err)
 		return err
 	}
 
 	// IpType - Check for valid types
 	switch status.IpType {
 	case types.AddressTypeNone:
+		// Do nothing
 	case types.AddressTypeIPV4, types.AddressTypeIPV6,
 		types.AddressTypeCryptoIPV4, types.AddressTypeCryptoIPV6:
 
@@ -456,8 +600,12 @@ func doNetworkInstanceSubnetSanityCheck(
 	ctx *zedrouterContext,
 	status *types.NetworkInstanceStatus) error {
 
-	if status.Subnet.IP == nil || status.Subnet.IP.IsUnspecified() {
-		err := fmt.Sprintf("Subnet Unspecified: %+v\n", status.Subnet)
+	// Mesh network instance with crypto V6 addressing will not need any
+	// subnet specific configuration
+	if (status.Subnet.IP == nil || status.Subnet.IP.IsUnspecified()) &&
+		(status.IpType != types.AddressTypeCryptoIPV6) {
+		err := fmt.Sprintf("Subnet Unspecified for %s-%s: %+v\n",
+			status.Key(), status.DisplayName, status.Subnet)
 		return errors.New(err)
 	}
 
@@ -500,6 +648,12 @@ func doNetworkInstanceSubnetSanityCheck(
 // 2) It should be a subset of Subnet
 func DoNetworkInstanceStatusDhcpRangeSanityCheck(
 	status *types.NetworkInstanceStatus) error {
+	// For Mesh type network instance with Crypto V6 addressing, no dhcp-range
+	// will be specified.
+	if status.Type == types.NetworkInstanceTypeMesh &&
+		status.IpType == types.AddressTypeCryptoIPV6 {
+		return nil
+	}
 	if status.DhcpRange.Start == nil || status.DhcpRange.Start.IsUnspecified() {
 		err := fmt.Sprintf("DhcpRange Start Unspecified: %+v\n",
 			status.DhcpRange.Start)
@@ -596,7 +750,7 @@ func restartDnsmasq(status *types.NetworkInstanceStatus) {
 	bridgeName := status.BridgeName
 	stopDnsmasq(bridgeName, false, true)
 
-	hostsDirpath := globalRunDirname + "/hosts." + bridgeName
+	hostsDirpath := runDirname + "/hosts." + bridgeName
 	// XXX arbitrary name "router"!!
 	addToHostsConfiglet(hostsDirpath, "router",
 		[]string{status.BridgeIPAddr})
@@ -732,20 +886,23 @@ func getPortIPv4Addr(ctx *zedrouterContext,
 
 	// Get IP address from adapter
 	ifname := types.AdapterToIfName(ctx.deviceNetworkStatus, status.Port)
-	link, err := netlink.LinkByName(ifname)
+	ifindex, err := devicenetwork.IfnameToIndex(ifname)
 	if err != nil {
 		return "", err
 	}
 	// XXX Add IPv6 underlay; ignore link-locals.
-	addrs, err := netlink.AddrList(link, syscall.AF_INET)
+	addrs, err := devicenetwork.IfindexToAddrs(ifindex)
 	if err != nil {
-		return "", err
+		log.Warnf("IfIndexToAddrs failed: %s\n", err)
+		addrs = nil
 	}
 	for _, addr := range addrs {
 		log.Infof("found addr %s\n", addr.IP.String())
-		return addr.IP.String(), nil
+		if addr.IP.To4() != nil {
+			return addr.IP.String(), nil
+		}
 	}
-	log.Infof("No IP address on %s yet\n", status.Port)
+	log.Infof("No IPv4 address on %s yet\n", status.Port)
 	return "", nil
 }
 
@@ -780,38 +937,31 @@ func setBridgeIPAddrForNetworkInstance(
 	case types.NetworkInstanceTypeSwitch:
 		ipAddr, err = getPortIPv4Addr(ctx, status)
 		if err != nil {
-			log.Errorf("setBridgeIPAddrForNetworkInstance: getBridgeServiceIPv4Addr failed: %s\n",
+			log.Errorf("setBridgeIPAddrForNetworkInstance: getPortIPv4Addr failed: %s\n",
 				err)
 			return err
 		}
 		log.Infof("Bridge: %s, Link: %s, ipAddr: %s\n",
 			status.BridgeName, link, ipAddr)
+	case types.NetworkInstanceTypeMesh:
+		status.Ipv4Eid = (status.Subnet.IP != nil && status.Subnet.IP.To4() != nil)
+		if status.Ipv4Eid {
+			// Require an IPv4 gateway
+			if status.Gateway == nil {
+				errStr := fmt.Sprintf("No IPv4 gateway for bridge %s network %s subnet %s",
+					status.BridgeName, status.Key(),
+					status.Subnet.String())
+				return errors.New(errStr)
+			}
+			ipAddr = status.Gateway.String()
+			log.Infof("setBridgeIPAddrForNetworkInstance: Bridge %s assigned IPv4 EID %s",
+				status.BridgeName, ipAddr)
+		} else {
+			ipAddr = "fd00::" + strconv.FormatInt(int64(status.BridgeNum), 16)
+			log.Infof("setBridgeIPAddrForNetworkInstance: Bridge %s assigned IPv6 EID %s",
+				status.BridgeName, ipAddr)
+		}
 	}
-
-	// Unlike bridge service Lisp will not need a service now for
-	// generating ip address.
-	// So we check the type of the network instead of the type of the
-	// service
-
-	//if status.Type == types.NT_CryptoEID {
-	//	if status.Subnet.IP != nil && status.Subnet.IP.To4() != nil {
-	//		// Require an IPv4 gateway
-	//		if status.Gateway == nil {
-	//			errStr := fmt.Sprintf("No IPv4 gateway for bridge %s network %s subnet %s",
-	//				status.BridgeName, status.Key(),
-	//				status.Subnet.String())
-	//			return errors.New(errStr)
-	//		}
-	//		ipAddr = status.Gateway.String()
-	//		log.Infof("setBridgeIPAddrForNetworkInstance: Bridge %s assigned IPv4 EID %s\n",
-	//			status.BridgeName, ipAddr)
-	//		status.Ipv4Eid = true
-	//	} else {
-	//		ipAddr = "fd00::" + strconv.FormatInt(int64(status.BridgeNum), 16)
-	//		log.Infof("setBridgeIPAddrForNetworkInstance: Bridge %s assigned IPv6 EID %s\n",
-	//			status.BridgeName, ipAddr)
-	//	}
-	//}
 
 	// If not we do a local allocation
 	// Assign the gateway Address as the bridge IP address
@@ -892,7 +1042,7 @@ func maybeUpdateBridgeIPAddrForNetworkInstance(
 	if status == nil {
 		return
 	}
-	log.Infof("maybeUpdateBridgeIPAddrForNetworkInstance: found \n"+
+	log.Infof("maybeUpdateBridgeIPAddrForNetworkInstance: found "+
 		"NetworkInstance %s", status.DisplayName)
 
 	if !status.Activated {
@@ -902,35 +1052,6 @@ func maybeUpdateBridgeIPAddrForNetworkInstance(
 	}
 	updateBridgeIPAddrForNetworkInstance(ctx, status)
 	return
-}
-
-// XXX - This function is redundant.. This is already covered by ( and more )
-//	checkPortAvailableForNetworkInstance. Delete this.
-func validatePortForNetworkInstance(ctx *zedrouterContext, port string,
-	allowPortSharing bool) error {
-
-	if port == "" {
-		log.Infof("port not specified")
-		return nil
-	}
-	if allowPortSharing && isSharedPortLabel(port) {
-		log.Infof("NI allows port sharing and port(%s) is a mgmt port", port)
-		return nil
-	}
-
-	portStatus := ctx.deviceNetworkStatus.GetPortByName(port)
-	if portStatus == nil {
-		// XXX Fallback until we have complete Name support in UI
-		portStatus = ctx.deviceNetworkStatus.GetPortByIfName(port)
-		if portStatus == nil {
-			errStr := fmt.Sprintf("portStatus not found for port %s",
-				port)
-			return errors.New(errStr)
-		}
-		log.Warnf("Port %s matched Ifname but not Name", port)
-	}
-	log.Infof("Port %s valid for NetworkInstance", port)
-	return nil
 }
 
 // doNetworkInstanceActivate
@@ -943,11 +1064,11 @@ func doNetworkInstanceActivate(ctx *zedrouterContext,
 	// Check that Port is either "uplink", "freeuplink", or
 	// an existing port name assigned to domO/zedrouter.
 	// A Bridge only works with a single adapter interface.
-	// Management ports are not allowed to be part of Bridge networks.
-	err := validatePortForNetworkInstance(ctx, status.Port,
-		allowSharedPort(status))
+	// Management ports are not allowed to be part of Switch networks.
+	err := checkPortAvailableForNetworkInstance(ctx, status)
 	if err != nil {
-		log.Infof("validatePortForNwrqoekInstance failed: Port: %s, err:%s", err, status.Port)
+		log.Errorf("checkPortAvailableForNetworkInstance failed: Port: %s, err:%s",
+			status.Port, err)
 		return err
 	}
 
@@ -963,6 +1084,10 @@ func doNetworkInstanceActivate(ctx *zedrouterContext,
 		}
 	case types.NetworkInstanceTypeLocal:
 		err = natActivateForNetworkInstance(ctx, status)
+	case types.NetworkInstanceTypeCloud:
+		err = vpnActivateForNetworkInstance(ctx, status)
+	case types.NetworkInstanceTypeMesh:
+		err = lispActivateForNetworkInstance(ctx, status)
 	default:
 		errStr := fmt.Sprintf("doNetworkInstanceActivate: NetworkInstance %d not yet supported",
 			status.Type)
@@ -993,7 +1118,8 @@ func getIfNameListForPort(
 			//	a device without the corresponding linux interface. We can
 			//	remove this check for ifindex here when the MakeDeviceStatus
 			//	is fixed.
-			ifIndex, err := IfnameToIndex(ifName)
+			// XXX That bug has been fixed. Retest without this code?
+			ifIndex, err := devicenetwork.IfnameToIndex(ifName)
 			if err == nil {
 				log.Infof("ifName %s, ifindex: %d added to filteredList",
 					ifName, ifIndex)
@@ -1024,6 +1150,13 @@ func doNetworkInstanceInactivate(
 
 	bridgeInactivateforNetworkInstance(ctx, status)
 	natInactivateForNetworkInstance(ctx, status)
+	switch status.Type {
+	case types.NetworkInstanceTypeCloud:
+		vpnInactivateForNetworkInstance(ctx, status)
+	case types.NetworkInstanceTypeMesh:
+		lispInactivateForNetworkInstance(ctx, status)
+	}
+
 	return
 }
 
@@ -1040,16 +1173,20 @@ func doNetworkInstanceDelete(
 		// Nothing to do.
 	case types.NetworkInstanceTypeLocal:
 		natDeleteForNetworkInstance(status)
+	case types.NetworkInstanceTypeCloud:
+		vpnDeleteForNetworkInstance(ctx, status)
 	default:
 		log.Errorf("NetworkInstance(%s-%s): Type %d not yet supported",
 			status.DisplayName, status.UUID, status.Type)
 	}
 
 	doNetworkInstanceBridgeAclsDelete(ctx, status)
-	stopDnsmasq(status.BridgeName, false, false)
+	if status.BridgeName != "" {
+		stopDnsmasq(status.BridgeName, false, false)
 
-	if status.IsIPv6() {
-		stopRadvd(status.BridgeName, true)
+		if status.IsIPv6() {
+			stopRadvd(status.BridgeName, true)
+		}
 	}
 	networkInstanceBridgeDelete(ctx, status)
 }
@@ -1110,6 +1247,13 @@ func createNetworkInstanceMetrics(ctx *zedrouterContext,
 
 	netMetrics.MetricList = []types.NetworkMetric{*netMetric}
 	niMetrics.NetworkMetrics = netMetrics
+	switch status.Type {
+	case types.NetworkInstanceTypeCloud:
+		if strongSwanVpnStatusGetForNetworkInstance(ctx, status, &niMetrics) {
+			publishNetworkInstanceStatus(ctx, status)
+		}
+	default:
+	}
 
 	return &niMetrics
 }
@@ -1159,18 +1303,19 @@ func getBridgeServiceIPv4AddrForNetworkInstance(
 
 	// Get IP address from Port
 	ifname := types.AdapterToIfName(ctx.deviceNetworkStatus, status.Port)
-	link, err := netlink.LinkByName(ifname)
+	ifindex, err := devicenetwork.IfnameToIndex(ifname)
 	if err != nil {
 		return "", err
 	}
-	// XXX - We really should maintain these addresses in our own data structures
-	//		and not query netlink. To be cleaned up.
-	// XXX Add IPv6 underlay; ignore link-locals.
-	addrs, err := netlink.AddrList(link, syscall.AF_INET)
+	addrs, err := devicenetwork.IfindexToAddrs(ifindex)
 	if err != nil {
-		return "", err
+		log.Warnf("IfIndexToAddrs failed: %s\n", err)
+		addrs = nil
 	}
 	for _, addr := range addrs {
+		if addr.IP.To4() == nil {
+			continue
+		}
 		log.Infof("getBridgeServiceIPv4AddrForNetworkInstance(%s): found addr %s\n",
 			status.DisplayName, addr.IP.String())
 		return addr.IP.String(), nil
@@ -1180,9 +1325,9 @@ func getBridgeServiceIPv4AddrForNetworkInstance(
 	return "", nil
 }
 
-func publishNetworkInstanceStatus(
-	ctx *zedrouterContext,
+func publishNetworkInstanceStatus(ctx *zedrouterContext,
 	status *types.NetworkInstanceStatus) {
+
 	pub := ctx.pubNetworkInstanceStatus
 	pub.Publish(status.Key(), &status)
 }
@@ -1257,6 +1402,49 @@ func bridgeInactivateforNetworkInstance(ctx *zedrouterContext,
 		status.Port)
 }
 
+// ==== Lisp
+
+func lispActivateForNetworkInstance(ctx *zedrouterContext,
+	status *types.NetworkInstanceStatus) error {
+
+	log.Infof("lispActivateForNetworkInstance(%s)\n", status.DisplayName)
+
+	// Create Lisp IID & map-server configlets
+	iid := status.LispConfig.IID
+	mapServers := status.LispConfig.MapServers
+	cfgPathnameIID := lispRunDirname + "/" +
+		strconv.FormatUint(uint64(iid), 10)
+	file, err := os.Create(cfgPathnameIID)
+	if err != nil {
+		log.Errorf("lispActivateForNetworkInstance failed: %s ", err)
+		return err
+	}
+	defer file.Close()
+
+	// Write map-servers to configlet
+	for _, ms := range mapServers {
+		msConfigLine := fmt.Sprintf(lispMStemplate, iid,
+			ms.NameOrIp, ms.Credential)
+		file.WriteString(msConfigLine)
+	}
+
+	// Write Lisp IID template
+	iidConfig := fmt.Sprintf(lispIIDtemplate, iid)
+	file.WriteString(iidConfig)
+
+	if status.Ipv4Eid {
+		ipv4Network := status.Subnet.IP.Mask(status.Subnet.Mask)
+		maskLen, _ := status.Subnet.Mask.Size()
+		subnet := fmt.Sprintf("%s/%d",
+			ipv4Network.String(), maskLen)
+		file.WriteString(fmt.Sprintf(
+			lispIPv4IIDtemplate, iid, subnet))
+	}
+
+	log.Infof("lispActivateForNetworkInstance(%s)\n", status.DisplayName)
+	return nil
+}
+
 // ==== Nat
 
 // XXX need to redo this when MgmtPorts/FreeMgmtPorts changes?
@@ -1288,6 +1476,41 @@ func natActivateForNetworkInstance(ctx *zedrouterContext,
 		return err
 	}
 	return nil
+}
+
+func lispInactivateForNetworkInstance(ctx *zedrouterContext,
+	status *types.NetworkInstanceStatus) {
+	// Go through the AppNetworkConfigs and delete Lisp parameters
+	// that use this service.
+	pub := ctx.pubAppNetworkStatus
+	items := pub.GetAll()
+
+	// When service is deactivated we should delete IID and map-server
+	// configuration also
+	cfgPathnameIID := lispRunDirname + "/" +
+		strconv.FormatUint(uint64(status.LispStatus.IID), 10)
+	if err := os.Remove(cfgPathnameIID); err != nil {
+		log.Errorln(err)
+	}
+
+	for _, ans := range items {
+		appNetStatus := cast.CastAppNetworkStatus(ans)
+		if len(appNetStatus.OverlayNetworkList) == 0 {
+			continue
+		}
+		for _, olStatus := range appNetStatus.OverlayNetworkList {
+			if olStatus.Network == status.UUID {
+				// Pass global deviceNetworkStatus
+				deleteLispConfiglet(lispRunDirname, false,
+					status.LispStatus.IID, olStatus.EID,
+					olStatus.AppIPAddr,
+					*ctx.deviceNetworkStatus,
+					ctx.legacyDataPlane)
+			}
+		}
+	}
+
+	log.Infof("lispInactivateForNetworkInstance(%s)\n", status.DisplayName)
 }
 
 func natInactivateForNetworkInstance(ctx *zedrouterContext,
@@ -1355,4 +1578,105 @@ func networkInstanceAddressType(ctx *zedrouterContext, bridgeName string) int {
 		}
 	}
 	return ipVer
+}
+
+// ==== Vpn
+func vpnCreateForNetworkInstance(ctx *zedrouterContext,
+	status *types.NetworkInstanceStatus) error {
+	if status.OpaqueConfig == "" {
+		return errors.New("Vpn network instance create, invalid config")
+	}
+	return strongswanNetworkInstanceCreate(ctx, status)
+}
+
+func vpnActivateForNetworkInstance(ctx *zedrouterContext,
+	status *types.NetworkInstanceStatus) error {
+	if status.OpaqueConfig == "" {
+		return errors.New("Vpn network instance activate, invalid config")
+	}
+	return strongswanNetworkInstanceActivate(ctx, status)
+}
+
+func vpnInactivateForNetworkInstance(ctx *zedrouterContext,
+	status *types.NetworkInstanceStatus) {
+
+	strongswanNetworkInstanceInactivate(ctx, status)
+}
+
+func vpnDeleteForNetworkInstance(ctx *zedrouterContext,
+	status *types.NetworkInstanceStatus) {
+
+	strongswanNetworkInstanceDestroy(ctx, status)
+}
+
+func strongswanNetworkInstanceCreate(ctx *zedrouterContext,
+	status *types.NetworkInstanceStatus) error {
+
+	log.Infof("Vpn network instance create: %s\n", status.DisplayName)
+
+	// parse and structure the config
+	vpnConfig, err := strongSwanConfigGetForNetworkInstance(ctx, status)
+	if err != nil {
+		log.Warnf("Vpn network instance create: %v\n", err.Error())
+		return err
+	}
+
+	// stringify and store in status
+	bytes, err := json.Marshal(vpnConfig)
+	if err != nil {
+		log.Errorf("Vpn network instance create: %v\n", err.Error())
+		return err
+	}
+
+	status.OpaqueStatus = string(bytes)
+	if err := strongSwanVpnCreate(vpnConfig); err != nil {
+		log.Errorf("Vpn network instance create: %v\n", err.Error())
+		return err
+	}
+	return nil
+}
+
+func strongswanNetworkInstanceDestroy(ctx *zedrouterContext,
+	status *types.NetworkInstanceStatus) {
+
+	log.Infof("Vpn network instance delete: %s\n", status.DisplayName)
+	vpnConfig, err := strongSwanVpnStatusParse(status.OpaqueStatus)
+	if err != nil {
+		log.Warnf("Vpn network instance delete: %v\n", err.Error())
+	}
+
+	if err := strongSwanVpnDelete(vpnConfig); err != nil {
+		log.Warnf("Vpn network instance delete: %v\n", err.Error())
+	}
+}
+
+func strongswanNetworkInstanceActivate(ctx *zedrouterContext,
+	status *types.NetworkInstanceStatus) error {
+
+	log.Infof("Vpn network instance activate: %s\n", status.DisplayName)
+	vpnConfig, err := strongSwanVpnStatusParse(status.OpaqueStatus)
+	if err != nil {
+		log.Warnf("Vpn network instance activate: %v\n", err.Error())
+		return err
+	}
+
+	if err := strongSwanVpnActivate(vpnConfig); err != nil {
+		log.Errorf("Vpn network instance activate: %v\n", err.Error())
+		return err
+	}
+	return nil
+}
+
+func strongswanNetworkInstanceInactivate(ctx *zedrouterContext,
+	status *types.NetworkInstanceStatus) {
+
+	log.Infof("Vpn network instance inactivate: %s\n", status.DisplayName)
+	vpnConfig, err := strongSwanVpnStatusParse(status.OpaqueStatus)
+	if err != nil {
+		log.Warnf("Vpn network instance inactivate: %v\n", err.Error())
+	}
+
+	if err := strongSwanVpnInactivate(vpnConfig); err != nil {
+		log.Warnf("Vpn network instance inactivate: %v\n", err.Error())
+	}
 }

@@ -141,6 +141,7 @@ type DeviceNetworkConfig struct {
 // Array in timestamp aka priority order; first one is the most desired
 // config to use
 type DevicePortConfigList struct {
+	CurrentIndex   int
 	PortConfigList []DevicePortConfig
 }
 
@@ -155,6 +156,7 @@ type DevicePortConfig struct {
 	// All zeros means never tested.
 	LastFailed    time.Time
 	LastSucceeded time.Time
+	LastError     string // Set when LastFailed is updated
 
 	Ports []NetworkPortConfig
 }
@@ -183,15 +185,17 @@ func (portConfig *DevicePortConfig) DoSanitize(
 			if err == nil {
 				portConfig.TimePriority = fi.ModTime()
 			} else {
-				portConfig.TimePriority = time.Unix(1, 0)
+				portConfig.TimePriority = time.Unix(0, 0)
 			}
-			log.Infof("HandleDPCModify: Forcing TimePriority for %s to %v\n",
+			log.Infof("DoSanitize: Forcing TimePriority for %s to %v\n",
 				key, portConfig.TimePriority)
 		}
 	}
 	if sanitizeKey {
 		if portConfig.Key == "" {
 			portConfig.Key = key
+			log.Infof("DoSanitize: Forcing Key for %s TS %v\n",
+				key, portConfig.TimePriority)
 		}
 	}
 	if sanitizeName {
@@ -201,21 +205,25 @@ func (portConfig *DevicePortConfig) DoSanitize(
 			port := &portConfig.Ports[i]
 			if port.Name == "" {
 				port.Name = port.IfName
+				log.Infof("DoSanitize: Forcing Name for %s ifname %s\n",
+					key, port.IfName)
 			}
 		}
-
 	}
-	return
 }
 
+// Return false if recent failure (less than 60 seconds ago)
 func (portConfig DevicePortConfig) IsDPCTestable() bool {
-	// convert time difference in nano seconds to seconds
-	timeDiff := int64(time.Now().Sub(portConfig.LastFailed) / time.Second)
 
-	if portConfig.LastFailed.After(portConfig.LastSucceeded) && timeDiff < 60 {
-		return false
+	if portConfig.LastFailed.IsZero() {
+		return true
 	}
-	return true
+	if portConfig.LastSucceeded.After(portConfig.LastFailed) {
+		return true
+	}
+	// convert time difference in nano seconds to seconds
+	timeDiff := time.Since(portConfig.LastFailed) / time.Second
+	return (timeDiff > 60)
 }
 
 func (portConfig DevicePortConfig) IsDPCUntested() bool {
@@ -256,7 +264,7 @@ type ProxyConfig struct {
 }
 
 type DhcpConfig struct {
-	Dhcp       DhcpType // If DT_STATIC use below; if DT_NOOP do nothing
+	Dhcp       DhcpType // If DT_STATIC use below; if DT_NONE do nothing
 	AddrSubnet string   // In CIDR e.g., 192.168.1.44/24
 	Gateway    net.IP
 	DomainName string
@@ -294,6 +302,7 @@ type AddrInfo struct {
 // Published to microservices which needs to know about ports and IP addresses
 type DeviceNetworkStatus struct {
 	Version DevicePortConfigVersion // From DevicePortConfig
+	Testing bool                    // Ignore since it is not yet verified
 	Ports   []NetworkPortStatus
 }
 
@@ -397,6 +406,21 @@ func CountLocalAddrFreeNoLinkLocal(globalStatus DeviceNetworkStatus) int {
 	// Count the number of addresses which apply
 	addrs, _ := getInterfaceAddr(globalStatus, true, "", false)
 	return len(addrs)
+}
+
+// XXX move AF functionality to getInterfaceAddr?
+func CountLocalIPv4AddrFreeNoLinkLocal(globalStatus DeviceNetworkStatus) int {
+
+	// Count the number of addresses which apply
+	addrs, _ := getInterfaceAddr(globalStatus, true, "", false)
+	count := 0
+	for _, addr := range addrs {
+		if addr.To4() == nil {
+			continue
+		}
+		count += 1
+	}
+	return count
 }
 
 // Return number of local IP addresses for all the management ports with given name
@@ -668,12 +692,16 @@ func AdapterToIfName(deviceNetworkStatus *DeviceNetworkStatus,
 // IsAnyPortInPciBack
 //		Checks is any of the Ports are part of IO bundles which are in PCIback.
 //		If true, it also returns the portName ( NOT bundle name )
+//		Also returns whether it is currently used by an application by
+//		returning a UUID. If the UUID is zero it is in PCIback but available.
 func (portConfig *DevicePortConfig) IsAnyPortInPciBack(
-	aa *AssignableAdapters) (bool, string) {
+	aa *AssignableAdapters) (bool, string, uuid.UUID) {
 	if aa == nil {
 		log.Infof("IsAnyPortInPciBack: nil aa")
-		return false, ""
+		return false, "", uuid.UUID{}
 	}
+	log.Infof("IsAnyPortInPciBack: aa init %t, %d bundles, %d ports",
+		aa.Initialized, len(aa.IoBundleList), len(portConfig.Ports))
 	for _, port := range portConfig.Ports {
 		ioBundle := aa.LookupIoBundleForMember(
 			IoEth, port.IfName)
@@ -681,13 +709,15 @@ func (portConfig *DevicePortConfig) IsAnyPortInPciBack(
 			// It is not guaranteed that all Ports are part of Assignable Adapters
 			// If not found, the adaptor is not capable of being assigned at
 			// PCI level. So it cannot be in PCI back.
+			log.Infof("IsAnyPortInPciBack: ifname %s not found",
+				port.IfName)
 			continue
 		}
 		if ioBundle.IsPCIBack {
-			return true, port.IfName
+			return true, port.IfName, ioBundle.UsedByUUID
 		}
 	}
-	return false, ""
+	return false, "", uuid.UUID{}
 }
 
 type MapServerType uint8
@@ -706,6 +736,17 @@ type MapServer struct {
 }
 
 type LispConfig struct {
+	MapServers    []MapServer
+	IID           uint32
+	Allocate      bool
+	ExportPrivate bool
+	EidPrefix     net.IP
+	EidPrefixLen  uint32
+
+	Experimental bool
+}
+
+type NetworkInstanceLispConfig struct {
 	MapServers    []MapServer
 	IID           uint32
 	Allocate      bool
@@ -764,11 +805,11 @@ type OverlayNetworkStatus struct {
 type DhcpType uint8
 
 const (
-	DT_NOOP        DhcpType = iota
-	DT_STATIC               // Device static config
-	DT_PASSTHROUGH          // App passthrough e.g., to a bridge
-	DT_SERVER               // Local server for app network
-	DT_CLIENT               // Device client on external port
+	DT_NOOP       DhcpType = iota
+	DT_STATIC              // Device static config
+	DT_NONE                // App passthrough e.g., to a bridge
+	DT_Deprecated          // XXX to match .proto value
+	DT_CLIENT              // Device client on external port
 )
 
 type UnderlayNetworkConfig struct {
@@ -811,10 +852,13 @@ type UnderlayNetworkStatus struct {
 type NetworkType uint8
 
 const (
-	NT_IPV4      NetworkType = 4
+	NT_NOOP      NetworkType = 0
+	NT_IPV4      		 = 4
 	NT_IPV6                  = 6
 	NT_CryptoEID             = 14 // Either IPv6 or IPv4; adapter Addr
 	// determines whether IPv4 EIDs are in use.
+	NT_CryptoV4 = 24 // Not used
+	NT_CryptoV6 = 26 // Not used
 	// XXX Do we need a NT_DUAL/NT_IPV46? Implies two subnets/dhcp ranges?
 	// XXX how do we represent a bridge? NT_L2??
 )
@@ -827,7 +871,7 @@ const (
 type NetworkObjectConfig struct {
 	UUID            uuid.UUID
 	Type            NetworkType
-	Dhcp            DhcpType // If DT_STATIC or DT_SERVER use below
+	Dhcp            DhcpType // If DT_STATIC or DT_CLIENT use below
 	Subnet          net.IPNet
 	Gateway         net.IP
 	DomainName      string
@@ -1119,8 +1163,10 @@ type NetworkInstanceConfig struct {
 	DhcpRange       IpRange
 	DnsNameToIPList []DnsNameToIP // Used for DNS and ACL ipset
 
+	HasEncap bool // Lisp/Vpn, for adjusting pMTU
 	// For other network services - Proxy / Lisp /StrongSwan etc..
 	OpaqueConfig string
+	LispConfig   NetworkInstanceLispConfig
 }
 
 func (config *NetworkInstanceConfig) Key() string {
@@ -1161,7 +1207,7 @@ type NetworkInstanceStatus struct {
 	NetworkInstanceInfo
 
 	OpaqueStatus string
-	LispStatus   LispConfig
+	LispStatus   NetworkInstanceLispConfig
 
 	VpnStatus      *ServiceVpnStatus
 	LispInfoStatus *LispInfoStatus
@@ -1254,8 +1300,17 @@ func (status *NetworkInstanceStatus) IsIpAssigned(ip net.IP) bool {
 	return false
 }
 
+// Check if port is used even if a label like "uplink" is used to specify it
 func (status *NetworkInstanceStatus) IsUsingPort(port string) bool {
-	return strings.EqualFold(port, status.Port)
+	if strings.EqualFold(port, status.Port) {
+		return true
+	}
+	for _, ifname := range status.IfNameList {
+		if ifname == port {
+			return true
+		}
+	}
+	return false
 }
 
 // Similar support as in draft-ietf-netmod-acl-model
@@ -1269,7 +1324,7 @@ type ACE struct {
 // The host matching is suffix-matching thus zededa.net matches *.zededa.net.
 // XXX Need "interface"... e.g. "uplink" or "eth1"? Implicit in network used?
 // For now the matches are bidirectional.
-// XXX Add directionality? Different ragte limits in different directions?
+// XXX Add directionality? Different rate limits in different directions?
 // Value is always a string.
 // There is an implicit reject rule at the end.
 // The "eidset" type is special for the overlay. Matches all the IPs which
@@ -1526,6 +1581,7 @@ type VpnConnMetrics struct {
 	Name      string // connection name
 	EstTime   uint64 // established time
 	Type      NetworkServiceType
+	NIType    NetworkInstanceType
 	LEndPoint VpnEndPointMetrics
 	REndPoint VpnEndPointMetrics
 }

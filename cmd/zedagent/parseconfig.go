@@ -75,6 +75,9 @@ func parseConfig(config *zconfig.EdgeDevConfig, getconfigCtx *getconfigContext,
 	parseConfigItems(config, getconfigCtx)
 	parseDatastoreConfig(config, getconfigCtx)
 
+	// XXX increase likelyhood of being available when we look
+	parseSystemAdapterConfig(config, getconfigCtx, false)
+
 	parseBaseOsConfig(getconfigCtx, config)
 	// XXX Deprecated..
 	//	parseNetworkObjectConfig
@@ -85,7 +88,6 @@ func parseConfig(config *zconfig.EdgeDevConfig, getconfigCtx *getconfigContext,
 	parseNetworkObjectConfig(config, getconfigCtx)
 	parseNetworkServiceConfig(config, getconfigCtx)
 	parseNetworkInstanceConfig(config, getconfigCtx)
-	parseSystemAdapterConfig(config, getconfigCtx, false)
 	parseAppInstanceConfig(config, getconfigCtx)
 
 	return false
@@ -341,6 +343,24 @@ func publishNetworkInstanceConfig(ctx *getconfigContext,
 	log.Infof("Publish NetworkInstance Config: %+v", networkInstances)
 
 	unpublishDeletedNetworkInstanceConfig(ctx, networkInstances)
+	// check we do not have more than one VPN network instance
+	vpnCount := 0
+	for _, netInstApiCfg := range networkInstances {
+		if oCfg := netInstApiCfg.Cfg; oCfg != nil {
+			opaqueCfg := oCfg.GetOconfig()
+			if opaqueCfg != "" {
+				opaqueType := oCfg.GetType()
+				if opaqueType == zconfig.ZNetworkOpaqueConfigType_ZNetOConfigVPN {
+					vpnCount++
+				}
+			}
+		}
+	}
+
+	if vpnCount > 1 {
+		log.Errorf("publishNetworkInstanceConfig(): more than one VPN instance configuration\n")
+		return
+	}
 
 	for _, apiConfigEntry := range networkInstances {
 		id, err := uuid.FromString(apiConfigEntry.Uuidandversion.Uuid)
@@ -368,37 +388,106 @@ func publishNetworkInstanceConfig(ctx *getconfigContext,
 		if apiConfigEntry.Port != nil {
 			networkInstanceConfig.Port = apiConfigEntry.Port.Name
 		}
-		// For switch log+force to AddressTypeFirst do not copy
+		// XXX temporary hack:
+		// For switch log+force to AddressTypeNone and do not copy
 		// ipconfig but do copy opaque
 		// XXX zedcloud should send First/None type for switch
 		// network instances
 		networkInstanceConfig.IpType = types.AddressType(apiConfigEntry.IpType)
+
 		switch networkInstanceConfig.Type {
 		case types.NetworkInstanceTypeSwitch:
 			if networkInstanceConfig.IpType != types.AddressTypeNone {
-				log.Warnf("Switch network instance %s %s with invalid IpType %d\n",
+				log.Warnf("Switch network instance %s %s with invalid IpType %d overridden as %d\n",
+					networkInstanceConfig.UUID.String(),
+					networkInstanceConfig.DisplayName,
+					networkInstanceConfig.IpType,
+					types.AddressTypeNone)
+				networkInstanceConfig.IpType = types.AddressTypeNone
+			}
+			ctx.pubNetworkInstanceConfig.Publish(networkInstanceConfig.UUID.String(),
+				&networkInstanceConfig)
+
+		case types.NetworkInstanceTypeMesh:
+			// mark HasEncap as true, for special MTU handling
+			networkInstanceConfig.HasEncap = true
+			// if not cryptoIPv4/IPv6 type, flag it
+			if networkInstanceConfig.IpType != types.AddressTypeCryptoIPV4 && networkInstanceConfig.IpType != types.AddressTypeCryptoIPV6 {
+				log.Errorf("Network instance %s %s, %v not crypto type\n",
 					networkInstanceConfig.UUID.String(),
 					networkInstanceConfig.DisplayName,
 					networkInstanceConfig.IpType)
-				networkInstanceConfig.IpType = types.AddressTypeNone
 			}
+			populateLispConfig(apiConfigEntry, &networkInstanceConfig)
 
-		case types.NetworkInstanceTypeLocal,
-			types.NetworkInstanceTypeCloud,
-			types.NetworkInstanceTypeMesh:
+		// FIXME:XXX set encap flag, when the dummy interface
+		// is tested for the VPN
+		case types.NetworkInstanceTypeCloud:
+			// if opaque config not set, flag it
+			if apiConfigEntry.Cfg == nil {
+				log.Errorf("Network instance %s %s, %v, opaque not set\n",
+					networkInstanceConfig.UUID.String(),
+					networkInstanceConfig.DisplayName,
+					networkInstanceConfig.IpType)
+			} else {
+				ocfg := apiConfigEntry.Cfg
+				if ocfg.Type != zconfig.ZNetworkOpaqueConfigType_ZNetOConfigVPN {
+					log.Errorf("Network instance %s %s, %v invalid config \n",
+						networkInstanceConfig.UUID.String(),
+						networkInstanceConfig.DisplayName,
+						networkInstanceConfig.IpType)
+				}
+				networkInstanceConfig.OpaqueConfig = ocfg.Oconfig
+			}
+			// if not IPv4 type, flag it
+			if networkInstanceConfig.IpType != types.AddressTypeIPV4 {
+				log.Errorf("Network instance %s %s, %v not IPv4 type\n",
+					networkInstanceConfig.UUID.String(),
+					networkInstanceConfig.DisplayName,
+					networkInstanceConfig.IpType)
+			}
+		}
 
+		// other than switch-type(l2)
+		// if ip type is l3, do the needful
+		if networkInstanceConfig.IpType != types.AddressTypeNone {
 			parseIpspecForNetworkInstanceConfig(apiConfigEntry.Ip,
 				&networkInstanceConfig)
 
 			parseDnsNameToIpListForNetworkInstanceConfig(apiConfigEntry,
 				&networkInstanceConfig)
 		}
-		if apiConfigEntry.Cfg != nil {
-			networkInstanceConfig.OpaqueConfig = apiConfigEntry.Cfg.Oconfig
-		}
 
 		ctx.pubNetworkInstanceConfig.Publish(networkInstanceConfig.UUID.String(),
 			&networkInstanceConfig)
+	}
+}
+
+func populateLispConfig(apiConfigEntry *zconfig.NetworkInstanceConfig,
+	networkInstanceConfig *types.NetworkInstanceConfig) {
+	lispConfig := apiConfigEntry.Cfg.LispConfig
+	if lispConfig != nil {
+		mapServers := []types.MapServer{}
+		for _, ms := range lispConfig.LispMSs {
+			mapServer := types.MapServer{
+				ServiceType: types.MapServerType(ms.ZsType),
+				NameOrIp:    ms.NameOrIp,
+				Credential:  ms.Credential,
+			}
+			mapServers = append(mapServers, mapServer)
+		}
+		eidPrefix := net.IP(lispConfig.Allocationprefix)
+
+		// Populate service Lisp config that should be sent to zedrouter
+		networkInstanceConfig.LispConfig = types.NetworkInstanceLispConfig{
+			MapServers:    mapServers,
+			IID:           lispConfig.LispInstanceId,
+			Allocate:      lispConfig.Allocate,
+			ExportPrivate: lispConfig.Exportprivate,
+			EidPrefix:     eidPrefix,
+			EidPrefixLen:  lispConfig.Allocationprefixlen,
+			Experimental:  lispConfig.Experimental,
+		}
 	}
 }
 
@@ -423,11 +512,6 @@ func parseNetworkInstanceConfig(config *zconfig.EdgeDevConfig,
 		"sha % x vs. % x: %v\n",
 		networkInstancePrevConfigHash, configHash, networkInstances)
 	// Export NetworkInstanceConfig to zedrouter
-	// XXX
-	// System Adapter points to network for Proxy configuration.
-	// There could be a situation where networks change, but
-	// systerm adapters do not change. When we see the networks
-	// change, we should parse systerm adapters again.
 	publishNetworkInstanceConfig(getconfigCtx, networkInstances)
 }
 
@@ -451,7 +535,7 @@ func parseAppInstanceConfig(config *zconfig.EdgeDevConfig,
 		return
 	}
 	if getconfigCtx.rebootFlag {
-		log.Infof("parseAppInstanceConfig: ignoring updated config duu to rebootFlag: %v\n",
+		log.Infof("parseAppInstanceConfig: ignoring updated config due to rebootFlag: %v\n",
 			Apps)
 		return
 	}
@@ -496,6 +580,8 @@ func parseAppInstanceConfig(config *zconfig.EdgeDevConfig,
 		appInstance.FixedResources.VCpus = int(cfgApp.Fixedresources.Vcpus)
 		appInstance.FixedResources.VirtualizationMode = types.VmMode(cfgApp.Fixedresources.VirtualizationMode)
 		appInstance.FixedResources.EnableVnc = cfgApp.Fixedresources.EnableVnc
+		appInstance.FixedResources.VncDisplay = cfgApp.Fixedresources.VncDisplay
+		appInstance.FixedResources.VncPasswd = cfgApp.Fixedresources.VncPasswd
 
 		appInstance.StorageConfigList = make([]types.StorageConfig,
 			len(cfgApp.Drives))
@@ -615,6 +701,9 @@ func parseSystemAdapterConfig(config *zconfig.EdgeDevConfig,
 			continue
 		}
 		network := cast.CastNetworkObjectConfig(networkObject)
+		// XXX temporary hack: if static IP 0.0.0.0 we log and force
+		// Dhcp = DT_NONE. Remove once zedcloud can send Dhcp = None
+		forceDhcpNone := false
 		if sysAdapter.Addr != "" {
 			ip := net.ParseIP(sysAdapter.Addr)
 			if ip == nil {
@@ -622,6 +711,9 @@ func parseSystemAdapterConfig(config *zconfig.EdgeDevConfig,
 					"sysAdapter.Addr %s - ignored\n",
 					sysAdapter.Name, sysAdapter.Addr)
 				continue
+			}
+			if ip.IsUnspecified() {
+				forceDhcpNone = true
 			}
 			addrSubnet := network.Subnet
 			addrSubnet.IP = ip
@@ -635,13 +727,15 @@ func parseSystemAdapterConfig(config *zconfig.EdgeDevConfig,
 		port.Dhcp = network.Dhcp
 		switch network.Dhcp {
 		case types.DT_STATIC:
+			if forceDhcpNone {
+				log.Warnf("Forcing DT_NONE for %+v\n", port)
+				port.Dhcp = types.DT_NONE
+				break
+			}
 			if port.Gateway.IsUnspecified() || port.AddrSubnet == "" ||
 				port.DnsServers == nil {
 				log.Errorf("parseSystemAdapterConfig: DT_STATIC but missing parameters in %+v; ignored\n",
 					port)
-				// XXX to test with zedcloud sending empty
-				// DnsServers need to comment out this
-				// continue
 				continue
 			}
 		case types.DT_CLIENT:
@@ -907,6 +1001,17 @@ func publishNetworkObjectConfig(ctx *getconfigContext,
 				log.Errorf("publishNetworkObjectConfig: parseIpspec failed: %s\n", err)
 				continue
 			}
+		case types.NT_NOOP:
+			// XXX zedcloud is sending static and dynamic entries with zero.
+			// XXX could also be for a switch without an IP address??
+			if ipspec != nil {
+				err := parseIpspec(ipspec, &config)
+				if err != nil {
+					// XXX return how?
+					log.Errorf("publishNetworkObjectConfig: parseIpspec ignored: %s\n", err)
+				}
+			}
+
 		default:
 			log.Errorf("publishNetworkObjectConfig: Unknown NetworkConfig type %d for %s in %v; ignored\n",
 				config.Type, id.String(), netEnt)
@@ -1147,7 +1252,8 @@ func parseAppNetworkConfig(appInstance *types.AppInstanceConfig,
 
 	parseUnderlayNetworkConfig(appInstance, cfgApp, cfgNetworks,
 		cfgNetworkInstances)
-	parseOverlayNetworkConfig(appInstance, cfgApp, cfgNetworks)
+	parseOverlayNetworkConfig(appInstance, cfgApp, cfgNetworks,
+		cfgNetworkInstances)
 }
 
 func parseUnderlayNetworkConfig(appInstance *types.AppInstanceConfig,
@@ -1159,7 +1265,8 @@ func parseUnderlayNetworkConfig(appInstance *types.AppInstanceConfig,
 		ulCfg := parseUnderlayNetworkConfigEntry(
 			cfgApp, cfgNetworks, cfgNetworkInstances, intfEnt)
 		if ulCfg == nil {
-			log.Fatalf("Nil ulcfg")
+			log.Infof("Nil underlay config for Interface %s", intfEnt.Name)
+			continue
 		}
 		appInstance.UnderlayNetworkList = append(appInstance.UnderlayNetworkList,
 			*ulCfg)
@@ -1169,6 +1276,19 @@ func parseUnderlayNetworkConfig(appInstance *types.AppInstanceConfig,
 				intfEnt.Name, ulCfg.Error)
 		}
 	}
+}
+
+func isOverlayNetworkObject(netEnt *zconfig.NetworkConfig) bool {
+	switch netEnt.Type {
+	case zconfig.NetworkType_CryptoV4, zconfig.NetworkType_CryptoV6:
+		return true
+	default:
+	}
+	return false
+}
+
+func isOverlayNetworkInstance(netInstEntry *zconfig.NetworkInstanceConfig) bool {
+	return netInstEntry.InstType == zconfig.ZNetworkInstType_ZnetInstMesh
 }
 
 func parseUnderlayNetworkConfigEntry(
@@ -1196,12 +1316,18 @@ func parseUnderlayNetworkConfigEntry(
 			log.Errorf("%s", ulCfg.Error)
 			return ulCfg
 		}
+		if isOverlayNetworkInstance(networkInstanceEntry) {
+			return nil
+		}
 		ulCfg.UsesNetworkInstance = true
 		networkUuidStr = networkInstanceEntry.Uuidandversion.Uuid
 		log.Infof("NetworkInstance(%s-%s): InstType %v\n",
 			cfgApp.Displayname, cfgApp.Uuidandversion.Uuid,
 			networkInstanceEntry.InstType)
 	} else {
+		if isOverlayNetworkObject(netEnt) {
+			return nil
+		}
 		ulCfg.UsesNetworkInstance = false
 		networkUuidStr = netEnt.Id
 		log.Infof("parseUnderlayNetworkConfig: app %v net %v type %v\n",
@@ -1281,104 +1407,163 @@ func parseUnderlayNetworkConfigEntry(
 	return ulCfg
 }
 
+func parseOverlayNetworkConfigEntry(
+	cfgApp *zconfig.AppInstanceConfig,
+	cfgNetworks []*zconfig.NetworkConfig,
+	cfgNetworkInstances []*zconfig.NetworkInstanceConfig,
+	intfEnt *zconfig.NetworkAdapter) *types.EIDOverlayConfig {
+	var networkInstanceEntry *zconfig.NetworkInstanceConfig = nil
+
+	olCfg := new(types.EIDOverlayConfig)
+	olCfg.Name = intfEnt.Name
+
+	netEnt := lookupNetworkId(intfEnt.NetworkId, cfgNetworks)
+	if netEnt == nil {
+		// Lookup NetworkInstance ID
+		networkInstanceEntry = lookupNetworkInstanceId(intfEnt.NetworkId,
+			cfgNetworkInstances)
+		olCfg.UsesNetworkInstance = true
+		if networkInstanceEntry == nil {
+			olCfg.UsesNetworkInstance = true
+			olCfg.Error = fmt.Sprintf("App %s - Can't find network id %s in networks or "+
+				"networkinstances. Ignoring this network",
+				cfgApp.Displayname, intfEnt.NetworkId)
+			log.Errorf("%s", olCfg.Error)
+			// XXX These errors should be propagated to zedrouter.
+			// zedrouter can then relay these errors to zedcloud.
+			return olCfg
+		}
+		if !isOverlayNetworkInstance(networkInstanceEntry) {
+			return nil
+		}
+	} else {
+		if !isOverlayNetworkObject(netEnt) {
+			return nil
+		}
+		olCfg.UsesNetworkInstance = false
+	}
+	uuid, err := uuid.FromString(intfEnt.NetworkId)
+	if err != nil {
+		olCfg.Error = fmt.Sprintf("parseOverlayNetworkConfigEntry: "+
+			"Malformed UUID ignored: %s", err)
+		log.Errorf("%s", olCfg.Error)
+		return olCfg
+	}
+	if netEnt != nil {
+		if !isOverlayNetworkObject(netEnt) {
+			// We are not interested in non-overlays
+			return nil
+		}
+		log.Infof("parseOverlayNetworkConfigEntry: app %v net %v type %v\n",
+			cfgApp.Displayname, uuid.String(), netEnt.Type)
+	} else {
+		if !isOverlayNetworkInstance(networkInstanceEntry) {
+			// We are not interested in non-overlays
+			return nil
+		}
+		log.Infof("NetworkInstance(%s-%s): InstType %v\n",
+			cfgApp.Displayname, uuid.String(),
+			networkInstanceEntry.InstType)
+	}
+
+	olCfg.Network = uuid
+	if intfEnt.MacAddress != "" {
+		log.Infof("parseOverlayNetworkConfigEntry: (App %s, Overlay interface %s) - "+
+			"Got static mac %s", cfgApp.Displayname, olCfg.Name, intfEnt.MacAddress)
+		olCfg.AppMacAddr, err = net.ParseMAC(intfEnt.MacAddress)
+		if err != nil {
+			olCfg.Error = fmt.Sprintf("parseOverlayNetworkConfigEntry: bad MAC %s: %s\n",
+				intfEnt.MacAddress, err)
+			log.Errorf("%s", olCfg.Error)
+			return olCfg
+		}
+	}
+	// Handle old and new location of EIDv6
+	if intfEnt.CryptoEid != "" {
+		olCfg.EIDConfigDetails.EID = net.ParseIP(intfEnt.CryptoEid)
+		if olCfg.EIDConfigDetails.EID == nil {
+			olCfg.Error = fmt.Sprintf("parseOverlayNetworkConfigEntry: bad CryptoEid %s\n",
+				intfEnt.CryptoEid)
+			log.Errorf("%s", olCfg.Error)
+			return olCfg
+		}
+		// Any IPv4 EID?
+		if intfEnt.Addr != "" {
+			olCfg.AppIPAddr = net.ParseIP(intfEnt.Addr)
+			if olCfg.AppIPAddr == nil {
+				olCfg.Error = fmt.Sprintf("parseOverlayNetworkConfigEntry: bad Addr %s\n",
+					intfEnt.Addr)
+				log.Errorf("%s", olCfg.Error)
+				return olCfg
+			}
+		}
+	} else if intfEnt.Addr != "" {
+		olCfg.EIDConfigDetails.EID = net.ParseIP(intfEnt.Addr)
+		if olCfg.EIDConfigDetails.EID == nil {
+			olCfg.Error = fmt.Sprintf("parseOverlayNetworkConfigEntry: bad Addr %s\n",
+				intfEnt.Addr)
+			log.Errorf("%s", olCfg.Error)
+			return olCfg
+		}
+	}
+	if olCfg.AppIPAddr == nil {
+		olCfg.AppIPAddr = olCfg.EIDConfigDetails.EID
+	}
+
+	olCfg.ACLs = make([]types.ACE, len(intfEnt.Acls))
+	for aclIdx, acl := range intfEnt.Acls {
+		aclCfg := new(types.ACE)
+		aclCfg.Matches = make([]types.ACEMatch,
+			len(acl.Matches))
+		aclCfg.Actions = make([]types.ACEAction,
+			len(acl.Actions))
+		for matchIdx, match := range acl.Matches {
+			matchCfg := new(types.ACEMatch)
+			matchCfg.Type = match.Type
+			matchCfg.Value = match.Value
+			aclCfg.Matches[matchIdx] = *matchCfg
+		}
+
+		for actionIdx, action := range acl.Actions {
+			actionCfg := new(types.ACEAction)
+			actionCfg.Limit = action.Limit
+			actionCfg.LimitRate = int(action.Limitrate)
+			actionCfg.LimitUnit = action.Limitunit
+			actionCfg.LimitBurst = int(action.Limitburst)
+			actionCfg.PortMap = action.Portmap
+			actionCfg.TargetPort = int(action.AppPort)
+			aclCfg.Actions[actionIdx] = *actionCfg
+		}
+		olCfg.ACLs[aclIdx] = *aclCfg
+	}
+
+	olCfg.EIDConfigDetails.LispSignature = intfEnt.Lispsignature
+	olCfg.EIDConfigDetails.PemCert = intfEnt.Pemcert
+	olCfg.EIDConfigDetails.PemPrivateKey = intfEnt.Pemprivatekey
+
+	return olCfg
+}
+
 // parseOverlayNetworkConfig
-//	This is not supported for NetworkInstances.
 func parseOverlayNetworkConfig(appInstance *types.AppInstanceConfig,
 	cfgApp *zconfig.AppInstanceConfig,
-	cfgNetworks []*zconfig.NetworkConfig) {
+	cfgNetworks []*zconfig.NetworkConfig,
+	cfgNetworkInstances []*zconfig.NetworkInstanceConfig) {
 
 	for _, intfEnt := range cfgApp.Interfaces {
-		netEnt := lookupNetworkId(intfEnt.NetworkId, cfgNetworks)
-		if netEnt == nil {
-			log.Errorf("parseOverlayNetworkConfig: Can't find network id %s; ignored\n",
-				intfEnt.NetworkId)
+		olCfg := parseOverlayNetworkConfigEntry(
+			cfgApp, cfgNetworks, cfgNetworkInstances, intfEnt)
+		if olCfg == nil {
+			log.Infof("Nil olcfg for App interface %s", intfEnt.Name)
 			continue
 		}
-		uuid, err := uuid.FromString(netEnt.Id)
-		if err != nil {
-			log.Errorf("parseOverlayNetworkConfig: Malformed UUID ignored: %s\n",
-				err)
-			continue
-		}
-		if netEnt.Type != zconfig.NetworkType_CryptoEID {
-			continue
-		}
-		log.Infof("parseOverlayNetworkConfig: app %v net %v type %v\n",
-			cfgApp.Displayname, uuid.String(), netEnt.Type)
-
-		olCfg := new(types.EIDOverlayConfig)
-		olCfg.Network = uuid
-		olCfg.Name = intfEnt.Name
-		if intfEnt.MacAddress != "" {
-			olCfg.AppMacAddr, err = net.ParseMAC(intfEnt.MacAddress)
-			if err != nil {
-				log.Errorf("parseOverlayNetworkConfig: bad MAC %s: %s\n",
-					intfEnt.MacAddress, err)
-				// XXX report error?
-			}
-		}
-		// Handle old and new location of EIDv6
-		if intfEnt.CryptoEid != "" {
-			olCfg.EIDConfigDetails.EID = net.ParseIP(intfEnt.CryptoEid)
-			if olCfg.EIDConfigDetails.EID == nil {
-				log.Errorf("parseOverrlayNetworkConfig: bad CryptoEid %s\n",
-					intfEnt.CryptoEid)
-				// XXX report error?
-			}
-			// Any IPv4 EID?
-			if intfEnt.Addr != "" {
-				olCfg.AppIPAddr = net.ParseIP(intfEnt.Addr)
-				if olCfg.AppIPAddr == nil {
-					log.Errorf("parseOverlayNetworkConfig: bad Addr %s\n",
-						intfEnt.Addr)
-					// XXX report error?
-				}
-			}
-		} else if intfEnt.Addr != "" {
-			olCfg.EIDConfigDetails.EID = net.ParseIP(intfEnt.Addr)
-			if olCfg.EIDConfigDetails.EID == nil {
-				log.Errorf("parseOverrlayNetworkConfig: bad Addr %s\n",
-					intfEnt.Addr)
-				// XXX report error?
-			}
-		}
-		if olCfg.AppIPAddr == nil {
-			olCfg.AppIPAddr = olCfg.EIDConfigDetails.EID
-		}
-
-		olCfg.ACLs = make([]types.ACE, len(intfEnt.Acls))
-		for aclIdx, acl := range intfEnt.Acls {
-			aclCfg := new(types.ACE)
-			aclCfg.Matches = make([]types.ACEMatch,
-				len(acl.Matches))
-			aclCfg.Actions = make([]types.ACEAction,
-				len(acl.Actions))
-			for matchIdx, match := range acl.Matches {
-				matchCfg := new(types.ACEMatch)
-				matchCfg.Type = match.Type
-				matchCfg.Value = match.Value
-				aclCfg.Matches[matchIdx] = *matchCfg
-			}
-
-			for actionIdx, action := range acl.Actions {
-				actionCfg := new(types.ACEAction)
-				actionCfg.Limit = action.Limit
-				actionCfg.LimitRate = int(action.Limitrate)
-				actionCfg.LimitUnit = action.Limitunit
-				actionCfg.LimitBurst = int(action.Limitburst)
-				actionCfg.PortMap = action.Portmap
-				actionCfg.TargetPort = int(action.AppPort)
-				aclCfg.Actions[actionIdx] = *actionCfg
-			}
-			olCfg.ACLs[aclIdx] = *aclCfg
-		}
-
-		olCfg.EIDConfigDetails.LispSignature = intfEnt.Lispsignature
-		olCfg.EIDConfigDetails.PemCert = intfEnt.Pemcert
-		olCfg.EIDConfigDetails.PemPrivateKey = intfEnt.Pemprivatekey
-
 		appInstance.OverlayNetworkList = append(appInstance.OverlayNetworkList,
 			*olCfg)
+		if olCfg.Error != "" {
+			appInstance.Errors = append(appInstance.Errors, olCfg.Error)
+			log.Errorf("Error in Interface(%s) config. Error: %s",
+				intfEnt.Name, olCfg.Error)
+		}
 	}
 }
 
@@ -1612,6 +1797,22 @@ func parseConfigItems(config *zconfig.EdgeDevConfig, ctx *getconfigContext) {
 				globalConfigChange = true
 			}
 
+		case "network.fallback.any.eth":
+			newTs, err := types.ParseTriState(item.Value)
+			if err != nil {
+				log.Errorf("parseConfigItems: bad tristate value %s for %s: %s\n",
+					item.Value, key, err)
+				continue
+			}
+			if newTs != globalConfig.NetworkFallbackAnyEth {
+				log.Infof("parseConfigItems: %s change from %v to %v\n",
+					key,
+					globalConfig.NetworkFallbackAnyEth,
+					newTs)
+				globalConfig.NetworkFallbackAnyEth = newTs
+				globalConfigChange = true
+			}
+
 		case "debug.enable.usb":
 			newBool, err := strconv.ParseBool(item.Value)
 			if err != nil {
@@ -1789,9 +1990,39 @@ func parseConfigItems(config *zconfig.EdgeDevConfig, ctx *getconfigContext) {
 				globalConfigChange = true
 			}
 		default:
-			log.Errorf("Unknown configItem %s value %s\n",
-				key, item.Value)
-			// XXX send back error? Need device error for that
+			// Handle agentname items for loglevels
+			newString := item.Value
+			components := strings.Split(key, ".")
+			if len(components) == 3 && components[0] == "debug" &&
+				components[2] == "loglevel" {
+
+				agentName := components[1]
+				current := agentlog.LogLevel(&globalConfig,
+					agentName)
+				if current != newString {
+					log.Infof("parseConfigItems: %s change from %v to %v\n",
+						key, current, newString)
+					agentlog.SetLogLevel(&globalConfig,
+						agentName, newString)
+					globalConfigChange = true
+				}
+			} else if len(components) == 4 && components[0] == "debug" &&
+				components[2] == "remote" && components[3] == "loglevel" {
+				agentName := components[1]
+				current := agentlog.RemoteLogLevel(&globalConfig,
+					agentName)
+				if current != newString {
+					log.Infof("parseConfigItems: %s change from %v to %v\n",
+						key, current, newString)
+					agentlog.SetRemoteLogLevel(&globalConfig,
+						agentName, newString)
+					globalConfigChange = true
+				}
+			} else {
+				log.Errorf("Unknown configItem %s value %s\n",
+					key, item.Value)
+				// XXX send back error? Need device error for that
+			}
 		}
 	}
 	if globalConfigChange {
@@ -2094,7 +2325,7 @@ func handleReboot(getconfigCtx *getconfigContext) {
 	}
 
 	shutdownAppsGlobal(getconfigCtx.zedagentCtx)
-	errStr := "handleReboot rebooting"
+	errStr := "NORMAL: handleReboot rebooting"
 	log.Errorf(errStr)
 	agentlog.RebootReason(errStr)
 	execReboot(state)
@@ -2125,7 +2356,7 @@ func handleExecReboot() {
 
 	<-rebootTimer.C
 
-	errStr := "baseimage-update reboot"
+	errStr := "NORMAL: baseimage-update reboot"
 	log.Errorf(errStr)
 	agentlog.RebootReason(errStr)
 	execReboot(true)

@@ -25,7 +25,9 @@ package zedagent
 import (
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
@@ -49,6 +51,7 @@ const (
 	objectDownloadDirname = persistDir + "/downloads"
 	certificateDirname    = persistDir + "/certs"
 	checkpointDirname     = persistDir + "/checkpoint"
+	restartCounterFile    = configDir + "/restartcounter"
 
 	partitionCount = 2
 )
@@ -96,8 +99,14 @@ type zedagentContext struct {
 	subNetworkServiceMetrics  *pubsub.Subscription
 	subNetworkInstanceMetrics *pubsub.Subscription
 	subGlobalConfig           *pubsub.Subscription
+	GCInitialized             bool // Received initial GlobalConfig
 	subZbootStatus            *pubsub.Subscription
 	rebootCmdDeferred         bool
+	rebootReason              string
+	rebootTime                time.Time
+	restartCounter            uint32
+	subDevicePortConfigList   *pubsub.Subscription
+	devicePortConfigList      types.DevicePortConfigList
 }
 
 var debug = false
@@ -155,28 +164,49 @@ func Run() {
 
 	log.Infof("Starting %s\n", agentName)
 
+	zedagentCtx := zedagentContext{}
+
 	// If we have a reboot reason from this or the other partition
 	// (assuming the other is in inprogress) then we log it
 	// We assume the log makes it reliably to zedcloud hence we discard
 	// the reason.
-	rebootReason := agentlog.GetCurrentRebootReason()
-	if rebootReason != "" {
+	zedagentCtx.rebootReason, zedagentCtx.rebootTime = agentlog.GetCurrentRebootReason()
+	if zedagentCtx.rebootReason != "" {
 		log.Warnf("Current partition rebooted reason: %s\n",
-			rebootReason)
+			zedagentCtx.rebootReason)
 		agentlog.DiscardCurrentRebootReason()
 	}
-	rebootReason = agentlog.GetOtherRebootReason()
-	if rebootReason != "" {
+	otherRebootReason, otherRebootTime := agentlog.GetOtherRebootReason()
+	if otherRebootReason != "" {
 		log.Warnf("Other partition rebooted reason: %s\n",
-			rebootReason)
+			otherRebootReason)
 		agentlog.DiscardOtherRebootReason()
 	}
-	rebootReason = agentlog.GetCommonRebootReason()
-	if rebootReason != "" {
+	commonRebootReason, commonRebootTime := agentlog.GetCommonRebootReason()
+	if commonRebootReason != "" {
 		log.Warnf("Common rebooted reason: %s\n",
-			rebootReason)
+			commonRebootReason)
 		agentlog.DiscardCommonRebootReason()
 	}
+	if zedagentCtx.rebootReason == "" {
+		zedagentCtx.rebootReason = otherRebootReason
+		zedagentCtx.rebootTime = otherRebootTime
+	}
+	if zedagentCtx.rebootReason == "" {
+		zedagentCtx.rebootReason = commonRebootReason
+		zedagentCtx.rebootTime = commonRebootTime
+	}
+	if zedagentCtx.rebootReason == "" {
+		dateStr := time.Now().Format(time.RFC3339Nano)
+		reason := fmt.Sprintf("Unknown reboot reason - power failure or crash - at %s\n",
+			dateStr)
+		log.Warnf(reason)
+		zedagentCtx.rebootReason = reason
+		zedagentCtx.rebootTime = time.Now()
+	}
+
+	// Read and increment restartCounter
+	zedagentCtx.restartCounter = incrementRestartCounter()
 
 	// Run a periodic timer so we always update StillRunning
 	stillRunning := time.NewTicker(25 * time.Second)
@@ -192,7 +222,7 @@ func Run() {
 	// Pick up (mostly static) AssignableAdapters before we report
 	// any device info
 	aa := types.AssignableAdapters{}
-	zedagentCtx := zedagentContext{assignableAdapters: &aa}
+	zedagentCtx.assignableAdapters = &aa
 
 	// Cross link
 	getconfigCtx.zedagentCtx = &zedagentCtx
@@ -444,6 +474,29 @@ func Run() {
 	DNSctx.subDeviceNetworkStatus = subDeviceNetworkStatus
 	subDeviceNetworkStatus.Activate()
 
+	subDevicePortConfigList, err := pubsub.Subscribe("nim",
+		types.DevicePortConfigList{}, false, &zedagentCtx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	subDevicePortConfigList.ModifyHandler = handleDPCLModify
+	subDevicePortConfigList.DeleteHandler = handleDPCLDelete
+	zedagentCtx.subDevicePortConfigList = subDevicePortConfigList
+	subDevicePortConfigList.Activate()
+
+	// Read the GlobalConfig first
+	// Wait for initial GlobalConfig
+	for !zedagentCtx.GCInitialized {
+		log.Infof("Waiting for GCInitialized\n")
+		select {
+		case change := <-subGlobalConfig.C:
+			subGlobalConfig.ProcessChange(change)
+
+		case <-stillRunning.C:
+			agentlog.StillRunning(agentName)
+		}
+	}
+
 	time1 := time.Duration(globalConfig.ResetIfCloudGoneTime)
 	t1 := time.NewTimer(time1 * time.Second)
 	log.Infof("Started timer for reset for %d seconds\n", time1)
@@ -475,14 +528,12 @@ func Run() {
 	updateInprogress := isBaseOsCurrentPartitionStateInProgress(&zedagentCtx)
 	log.Infof("Current partition inProgress state is %v\n", updateInprogress)
 	log.Infof("Waiting until we have some uplinks with usable addresses\n")
-	waited := false
 	for !DNSctx.DNSinitialized ||
 		!zedagentCtx.assignableAdapters.Initialized {
 
 		log.Infof("Waiting for DomainNetworkStatus %v and aa %v\n",
 			DNSctx.DNSinitialized,
 			zedagentCtx.assignableAdapters.Initialized)
-		waited = true
 
 		select {
 		case change := <-subGlobalConfig.C:
@@ -496,6 +547,9 @@ func Run() {
 
 		case change := <-subAssignableAdapters.C:
 			subAssignableAdapters.ProcessChange(change)
+
+		case change := <-subDevicePortConfigList.C:
+			subDevicePortConfigList.ProcessChange(change)
 
 		case change := <-deferredChan:
 			zedcloud.HandleDeferred(change, 100*time.Millisecond)
@@ -520,11 +574,6 @@ func Run() {
 	}
 	t1.Stop()
 	t2.Stop()
-	if waited && DNSctx.usableAddressCount != 0 {
-		// Inform ledmanager that we have management port addresses
-		types.UpdateLedManagerConfig(2)
-		getconfigCtx.ledManagerCount = 2
-	}
 
 	// Subscribe to network metrics from zedrouter
 	subNetworkMetrics, err := pubsub.Subscribe("zedrouter",
@@ -576,9 +625,24 @@ func Run() {
 
 		case change := <-subDeviceNetworkStatus.C:
 			subDeviceNetworkStatus.ProcessChange(change)
+			if DNSctx.triggerDeviceInfo {
+				// IP/DNS in device info could have changed
+				log.Infof("NetworkStatus triggered PublishDeviceInfo\n")
+				publishDevInfo(&zedagentCtx)
+				DNSctx.triggerDeviceInfo = false
+			}
 
 		case change := <-subAssignableAdapters.C:
 			subAssignableAdapters.ProcessChange(change)
+
+		case change := <-subDevicePortConfigList.C:
+			subDevicePortConfigList.ProcessChange(change)
+			if zedagentCtx.TriggerDeviceInfo {
+				// CurrentIndex, LastError could have changed
+				log.Infof("DevicePortConfigList triggered PublishDeviceInfo\n")
+				publishDevInfo(&zedagentCtx)
+				zedagentCtx.TriggerDeviceInfo = false
+			}
 
 		case change := <-deferredChan:
 			zedcloud.HandleDeferred(change, 100*time.Millisecond)
@@ -687,6 +751,15 @@ func Run() {
 
 		case change := <-subNetworkInstanceMetrics.C:
 			subNetworkInstanceMetrics.ProcessChange(change)
+
+		case change := <-subDevicePortConfigList.C:
+			subDevicePortConfigList.ProcessChange(change)
+			if zedagentCtx.TriggerDeviceInfo {
+				// CurrentIndex, LastError could have changed
+				log.Infof("DevicePortConfigList triggered PublishDeviceInfo\n")
+				publishDevInfo(&zedagentCtx)
+				zedagentCtx.TriggerDeviceInfo = false
+			}
 
 		case <-stillRunning.C:
 			agentlog.StillRunning(agentName)
@@ -827,7 +900,12 @@ func handleDNSModify(ctxArg interface{}, key string, statusArg interface{}) {
 		return
 	}
 	log.Infof("handleDNSModify for %s\n", key)
+	if status.Testing {
+		log.Infof("handleDNSModify ignoring Testing\n")
+		return
+	}
 	if cmp.Equal(*deviceNetworkStatus, status) {
+		log.Infof("handleDNSModify no change\n")
 		return
 	}
 	log.Infof("handleDNSModify: changed %v",
@@ -862,6 +940,38 @@ func handleDNSDelete(ctxArg interface{}, key string,
 	ctx.DNSinitialized = false
 	ctx.usableAddressCount = newAddrCount
 	log.Infof("handleDNSDelete done for %s\n", key)
+}
+
+func handleDPCLModify(ctxArg interface{}, key string, statusArg interface{}) {
+
+	status := cast.CastDevicePortConfigList(statusArg)
+	ctx := ctxArg.(*zedagentContext)
+	if key != "global" {
+		log.Infof("handleDPCLModify: ignoring %s\n", key)
+		return
+	}
+	if cmp.Equal(ctx.devicePortConfigList, status) {
+		log.Infof("handleDPCLModify no change\n")
+		return
+	}
+	// Note that lastSucceeded will increment a lot; ignore it but compare
+	// lastFailed/lastError?? XXX how?
+	log.Infof("handleDPCLModify: changed %v",
+		cmp.Diff(ctx.devicePortConfigList, status))
+	ctx.devicePortConfigList = status
+	ctx.TriggerDeviceInfo = true
+}
+
+func handleDPCLDelete(ctxArg interface{}, key string, statusArg interface{}) {
+
+	ctx := ctxArg.(*zedagentContext)
+	if key != "global" {
+		log.Infof("handleDPCLDelete: ignoring %s\n", key)
+		return
+	}
+	log.Infof("handleDPCLDelete for %s\n", key)
+	ctx.devicePortConfigList = types.DevicePortConfigList{}
+	ctx.TriggerDeviceInfo = true
 }
 
 // base os status event handlers
@@ -907,8 +1017,14 @@ func handleGlobalConfigModify(ctxArg interface{}, key string,
 		return
 	}
 	log.Infof("handleGlobalConfigModify for %s\n", key)
-	debug, _ = agentlog.HandleGlobalConfig(ctx.subGlobalConfig, agentName,
+	var gcp *types.GlobalConfig
+	debug, gcp = agentlog.HandleGlobalConfig(ctx.subGlobalConfig, agentName,
 		debugOverride)
+	if gcp != nil && !ctx.GCInitialized {
+		log.Infof("handleGlobalConfigModify setting initials %+v\n", gcp)
+		globalConfig = *gcp
+		ctx.GCInitialized = true
+	}
 	log.Infof("handleGlobalConfigModify done for %s\n", key)
 }
 
@@ -970,4 +1086,31 @@ func handleZbootStatusDelete(ctxArg interface{}, key string,
 		log.Infof("handleZbootStatusDelete: for %s\n", key)
 	}
 	// Nothing to do
+}
+
+// If the file doesn't exist we pick zero.
+// Return value before increment; write new value to file
+func incrementRestartCounter() uint32 {
+	var restartCounter uint32
+
+	if _, err := os.Stat(restartCounterFile); err == nil {
+		b, err := ioutil.ReadFile(restartCounterFile)
+		if err != nil {
+			log.Errorf("incrementRestartCounter: %s\n", err)
+		} else {
+			c, err := strconv.Atoi(string(b))
+			if err != nil {
+				log.Errorf("incrementRestartCounter: %s\n", err)
+			} else {
+				restartCounter = uint32(c)
+				log.Infof("incrementRestartCounter: read %d\n", restartCounter)
+			}
+		}
+	}
+	b := []byte(fmt.Sprintf("%d", restartCounter+1))
+	err := ioutil.WriteFile(restartCounterFile, b, 0644)
+	if err != nil {
+		log.Errorf("incrementRestartCounter write: %s\n", err)
+	}
+	return restartCounter
 }
