@@ -21,67 +21,64 @@ BUILD_DATE  := $(shell date -u +"%Y-%m-%d-%H:%M")
 GIT_VERSION := $(shell git describe --match v --abbrev=8 --always --dirty)
 BRANCH_NAME := $(shell git rev-parse --abbrev-ref HEAD)
 VERSION     := $(GIT_TAG)
-# Go parameters
-GOCMD=go
-GOBUILD=$(GOCMD) build
+
+# Go parameters and builder
+GOVER ?= 1.9.1
+DOCKER_GO = docker run -it --rm -u $(USER) -w /go/src/$(GOMODULE) \
+    -v $(CURDIR)/.go:/go -v $(CURDIR):/go/src/$(GOMODULE) -v $${HOME}:/home/$(USER) \
+    -e GOOS=linux -e GOARCH=$(ARCH) -e CGO_ENABLED=1 -e BUILD=local $(GOBUILDER)
+
+# by default, build in docker container, unless override with BUILD=local
+GOBUILD=$(DOCKER_GO) go build
+ifeq ($(BUILD),local)
+GOBUILD=GOOS=linux GOARCH=$(ARCH) CGO_ENABLED=1 go build
+endif
+
 GOMODULE=github.com/zededa/go-provision
 
 BUILD_VERSION=$(shell scripts/getversion.sh)
 
-OBJDIR      := $(PWD)/bin/$(ARCH)
-BINDIR	    := $(OBJDIR)
+OBJDIR      := $(PWD)/dist/$(ARCH)
+DISTDIR	    := $(OBJDIR)
 
 DOCKER_ARGS=$${GOARCH:+--build-arg GOARCH=}$(GOARCH)
 DOCKER_TAG=zededa/ztools:local$${GOARCH:+-}$(GOARCH)
+GOBUILDER ?= eve-build-$(USER)
+
 
 APPS = zedbox
 APPS1 = logmanager ledmanager downloader verifier client zedrouter domainmgr identitymgr zedmanager zedagent hardwaremodel ipcmonitor nim diag baseosmgr wstunnelclient conntrack
 
 SHELL_CMD=bash
-define BUILD_CONTAINER
-FROM golang:1.9.1-alpine
-RUN apk add --no-cache openssh-client git gcc linux-headers libc-dev util-linux libpcap-dev bash vim make
-RUN deluser $(USER) ; delgroup $(GROUP) || :
-RUN sed -ie /:$(UID):/d /etc/passwd /etc/shadow ; sed -ie /:$(GID):/d /etc/group || :
-RUN addgroup -g $(GID) $(GROUP) && adduser -h /home/$(USER) -G $(GROUP) -D -H -u $(UID) $(USER)
-ENV HOME /home/$(USER)
-endef
 
-SHELL_CMD=bash
-define BUILD_CONTAINER
-FROM golang:1.9.1-alpine
-RUN apk add --no-cache openssh-client git gcc linux-headers libc-dev util-linux libpcap-dev bash vim make
-RUN deluser $(USER) ; delgroup $(GROUP) || :
-RUN sed -ie /:$(UID):/d /etc/passwd /etc/shadow ; sed -ie /:$(GID):/d /etc/group || :
-RUN addgroup -g $(GID) $(GROUP) && adduser -h /home/$(USER) -G $(GROUP) -D -H -u $(UID) $(USER)
-ENV HOME /home/$(USER)
-endef
-
-.PHONY: all clean vendor
+.PHONY: all clean vendor $(GOBUILDER) builder-image build build-docker versioninfo
 
 all: obj build
 
 obj:
-	@rm -rf $(BINDIR)
-	@mkdir -p $(BINDIR)
+	@rm -rf $(DISTDIR)
+	@mkdir -p $(DISTDIR)
 
-build:
-	@echo Building version $(BUILD_VERSION)
-	@mkdir -p var/tmp/zededa
-	@echo $(BUILD_VERSION) >$(BINDIR)/versioninfo
-	@for app in $(APPS); do \
-		echo $$app; \
-		CGO_ENABLED=0 \
-		GOOS=linux \
-		GOARCH=$(ARCH) $(GOBUILD) \
-			-ldflags -X=main.Version=$(BUILD_VERSION) \
-			-o $(BINDIR)/$$app github.com/zededa/go-provision/$$app || exit 1; \
-	done
-	@for app in $(APPS1); do \
-		echo $$app; \
-		rm -f $(BINDIR)/$$app; \
-		ln -s $(APPS) $(BINDIR)/$$app; \
-	done
+$(DISTDIR): 
+	mkdir -p $(DISTDIR)
+
+versioninfo:
+	@echo $(BUILD_VERSION) >$(DISTDIR)/versioninfo
+
+build: $(APPS) $(APPS1)
+
+$(APPS): $(DISTDIR) builder-image
+	@echo "Building $@"
+	@$(GOBUILD) -ldflags -X=main.Version=$(BUILD_VERSION) \
+		-o $(DISTDIR)/$@ github.com/zededa/go-provision/$@
+
+$(APPS1): $(DISTDIR)
+	@echo $@
+	@rm -f $(DISTDIR)/$@
+	@ln -s $(APPS) $(DISTDIR)/$@
+
+shell: builder-image
+	@$(DOCKER_GO) $(SHELL_CMD) 
 
 build-docker:
 	docker build $(DOCKER_ARGS) -t $(DOCKER_TAG) .
@@ -89,15 +86,12 @@ build-docker:
 build-docker-git:
 	git archive HEAD | docker build $(DOCKER_ARGS) -t $(DOCKER_TAG) -
 
-export BUILD_CONTAINER
-eve-build-$(USER):
-	@echo "$$BUILD_CONTAINER" | docker build -t $@ - >/dev/null
-
-shell: eve-build-$(USER)
-	@mkdir -p .go/src/$(GOMODULE)
-	@docker run -it --rm -u $(USER) -w /home/$(USER) \
-	  -v $(CURDIR)/.go:/go -v $(CURDIR):/go/src/$(GOMODULE) -v $${HOME}:/home/$(USER) \
-	$< $(SHELL_CMD)
+builder-image: $(GOBUILDER)
+$(GOBUILDER):
+ifneq ($(BUILD),local)
+	@echo "Creating go builder image for user $(USER)"
+	@docker build --build-arg GOVER=$(GOVER) --build-arg USER=$(USER) --build-arg GROUP=$(GROUP) --build-arg UID=$(UID) --build-arg GID=$(GID) -t $@ dev-support
+endif
 
 test: SHELL_CMD=go test github.com/zededa/go-provision/...
 test: shell
@@ -111,4 +105,4 @@ vendor: Gopkg.lock
 	touch Gopkg.toml
 
 clean:
-	@rm -rf bin
+	@rm -rf dist
